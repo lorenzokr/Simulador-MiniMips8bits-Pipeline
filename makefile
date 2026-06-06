@@ -1,8 +1,8 @@
 compila:
-		gcc ProjetoPI2_V3.c -o teste -g
-		./teste
+		gcc pipeline.c -o teste2 -g
+		./teste2
 clear:
-		rm teste
+		rm teste2
 		rm arquivo_dados.txt
 		rm assembly.asm
 
