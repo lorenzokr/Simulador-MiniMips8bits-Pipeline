@@ -111,7 +111,7 @@ typedef struct metricas {
 } metricas;
 
 
-int registradores[8]={0, 0, 0, 0, 0, 0, 0, 0};
+int registradores[8]={0, 1, 2, 0, 0, 10, 0, 0};
 int memoria[256] = {0};
 int oldreg[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 int oldmem[256] = {0};
@@ -315,6 +315,26 @@ int main() {
             printf("\nSaida da ula:%d", reg_MemWb_prox.resultado_ula);
             printf("\nSaida da memoria:%d", reg_MemWb_prox.saida_memoria);
             printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_MemWb_prox.sinais_wb.RegWrite, reg_MemWb_prox.sinais_wb.MemToReg);
+            
+            if(Forwading_prox.forwadingA != 0 || Forwading_prox.forwadingB != 0)
+            {
+                printf("\n==========================================================");
+                printf("\nDesvio da unidade de forwading feito novos valores do estagio EX:");
+                saida_mem_wb=mux_memtoreg(reg_MemWb_atual.saida_memoria,reg_MemWb_atual.resultado_ula,reg_MemWb_atual.sinais_wb.MemToReg);
+                reg_ExMem_prox = estagio_ex(reg_IdEX_atual,reg_ExMem_atual.resultado_ula,saida_mem_wb,Forwading_prox);
+                imprimir_instrucao(reg_ExMem_prox.instrucao);
+                printf("\nValores do registrador pipeline EX/MEM gerado:");
+                printf("\nSaida da ula:%d", reg_ExMem_prox.resultado_ula);
+                printf("\nSaida zero da ula:%d", reg_ExMem_prox.zero_ula);
+                printf("\nValor do jump:%d", reg_ExMem_prox.valor_jump);
+                printf("\nSoma do pc:%d", reg_ExMem_prox.soma_pc);
+                printf("\nRegistrador de destino:%d", reg_ExMem_prox.registrador_destino);
+                printf("\nEndereco de desvio:%d", reg_ExMem_prox.endereco_desvio);
+                printf("\nSaida 2 do banco de registradores:%d", reg_ExMem_prox.saida2_banco_registradores);
+                printf("\nSinais de controle MEM -> Memwrite:%d | Branch:%d | Jump:%d", reg_ExMem_prox.sinais_mem.MemWrite, reg_ExMem_prox.sinais_mem.Branch, reg_ExMem_prox.sinais_mem.jump);
+                printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_ExMem_prox.sinais_wb.RegWrite, reg_ExMem_prox.sinais_wb.MemToReg);
+                printf("\n===============================================================");
+            }
             // 5. ETAPA DE WRITE BACK (WB)
             printf("\n\nETAPA DE WRITE BACK (WB):");
             estagio_wb(reg_MemWb_atual, registradores);
@@ -861,17 +881,32 @@ void reduzir_metricas(metricas *m, char ultimaInst) {
 sinais_controle_forwading forwading_unidade(unidade_forwading f)
 {
     sinais_controle_forwading s = {0};
-    if (f.ex_mem_writeREG && (f.ex_mem_RegRD != 0) && (f.ex_mem_RegRD == f.id_ex_RegRS)) {
+    if (f.ex_mem_writeREG && (f.ex_mem_RegRD != 0) && (f.ex_mem_RegRD == f.id_ex_RegRS)) 
+    {
         s.forwadingA = 2;
+        printf("\nDependecia detectada!");
+        printf("\nEntre o registrador %d e %d",f.ex_mem_RegRD,f.id_ex_RegRS);
+        printf("\nAtivando unidade de forwading A");
     } 
-    else if (f.Mem_WB_WriteREG && (f.mem_wb_RegRD != 0) && (f.mem_wb_RegRD == f.id_ex_RegRS)) {
+    else if (f.Mem_WB_WriteREG && (f.mem_wb_RegRD != 0) && (f.mem_wb_RegRD == f.id_ex_RegRS))
+    {
         s.forwadingA = 1;
+        printf("\nDependecia detectada!");
+        printf("\nEntre o registrador %d e %d",f.mem_wb_RegRD,f.id_ex_RegRS);
+        printf("\nAtivando unidade de forwading A");
+        
     }
     if (f.ex_mem_writeREG && (f.ex_mem_RegRD != 0) && (f.ex_mem_RegRD == f.id_ex_RegRT)) {
         s.forwadingB = 2;
+        printf("\nDependecia detectada!");
+        printf("\nEntre o registrador %d e %d",f.ex_mem_RegRD,f.id_ex_RegRT);
+        printf("\nAtivando unidade de forwading B");
     } 
     else if (f.Mem_WB_WriteREG && (f.mem_wb_RegRD != 0) && (f.mem_wb_RegRD == f.id_ex_RegRT)) {
         s.forwadingB = 1;
+         printf("\nDependecia detectada!");
+        printf("\nEntre o registrador %d e %d",f.mem_wb_RegRD,f.id_ex_RegRT);
+        printf("\nAtivando unidade de forwading B");
     }
 
     return s; 
@@ -1096,6 +1131,9 @@ REG_pepiline_EX_MEM estagio_ex(REG_pepiline_ID_EX id, int ex_mem, int mem_wb, si
     int saida_mux_ula_fonte;
     int resultado_forwadingA;
     int resultado_forwadingB;
+    printf("\nSinal forwading A:%d",sinal_forwading.forwadingA);
+    printf("\nSinal forwading B:%d",sinal_forwading.forwadingB);
+    printf("\nSaida banco de registradores:%d",id.saida1_banco_reg);
     resultado_forwadingA = mux_forwadingA(id.saida1_banco_reg, ex_mem, mem_wb, sinal_forwading.forwadingA);
     resultado_forwadingB = mux_forwadingB(id.saida2_banco_reg, ex_mem, mem_wb, sinal_forwading.forwadingB); // Usa a saida2_banco_reg!
 
