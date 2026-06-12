@@ -265,6 +265,7 @@ int main() {
          break;
          case 8:
           do{
+            pushStepback(&pilha, c, reg_IfID_atual, reg_IdEX_atual, reg_ExMem_atual, reg_MemWb_atual, Forwading, Forwading_atual, metricas, pc);
             printf("\n================ CLOCK STEP ================\n");
 
             // 1. ETAPA DE BUSCA (IF)
@@ -297,7 +298,7 @@ int main() {
 
             // 3. ESTÁGIO DE EXECUÇÃO (EX) 
             printf("\n\nESTAGIO DE EXECUCAO (EX):");
-            saida_mem_wb=mux_memtoreg(reg_MemWb_atual.saida_memoria,reg_MemWb_atual.resultado_ula,reg_MemWb_atual.sinais_wb.MemToReg);
+            saida_mem_wb=mux_memtoreg(reg_MemWb_atual.saida_memoria, reg_MemWb_atual.resultado_ula, reg_MemWb_atual.sinais_wb.MemToReg);
             reg_ExMem_prox = estagio_ex(reg_IdEX_atual,reg_ExMem_atual.resultado_ula,saida_mem_wb,Forwading_atual);
             imprimir_instrucao(reg_ExMem_prox.instrucao);
             printf("\nValores do registrador pipeline EX/MEM gerado:");
@@ -353,6 +354,17 @@ int main() {
             printf("\n\nETAPA DE WRITE BACK (WB):");
             estagio_wb(reg_MemWb_atual, registradores);
             imprimir_instrucao(reg_MemWb_atual.instrucao);
+            /*if (reg_MemWb_atual.) {}     para garantir que o wb ta terminando uma instrução. nao achei como garantir que 
+            ele está terminando algo ou vazio, então deixei comentado. só ajeitar isso.*/ 
+            if (reg_MemWb_atual.instrucao.opcode == 0) {
+                metricas.contInstReg++;
+            }
+            else if(reg_MemWb_atual.instrucao.opcode == 2) {
+                metricas.contInstJump ++;
+            }
+            else {
+                metricas.contInstImm ++;
+            }
             imprimir_reg();  
 
 
@@ -363,8 +375,7 @@ int main() {
             Forwading_atual=Forwading_prox;
             pc=pc_prox;
             printf("\nPC atualizado para o proximo ciclo: %d\n", pc);
-
-
+            metricas.contClock ++;
         
         }while(pc<=255);
         printf("Programa Executado!\n");
@@ -1326,11 +1337,8 @@ REG_pepiline_MEM_WB estagio_mem(REG_pepiline_EX_MEM ex, int memoria[], int *pc)
     printf("\nSoma pc: %d", ex.soma_pc);
     printf("\nENDERECO DE DESVIO: %d", ex.endereco_desvio);
 
-    // =================================================================
-    // CORREÇÃO CRÍTICA: PROTEÇÃO DO PC
-    // =================================================================
-    // Só alteramos o PC se o Branch for tomado (Branch AND Zero) OU se for um Jump.
-    // Se for uma instrução normal (ou pipeline vazio), NÃO tocamos no *pc.
+    // Só alteramos o PC se o Branch for tomado  OU se for um Jump.
+    // Se for uma instrução normal , NÃO tocamos no *pc.
     if ((ex.sinais_mem.Branch && ex.zero_ula) || ex.sinais_mem.jump) {
         *pc = mux_jump(ex.sinais_mem.jump, saida_mux_branch, ex.valor_jump);
         printf("\n[MEM] Desvio detectado! PC atualizado para: %d", *pc);
