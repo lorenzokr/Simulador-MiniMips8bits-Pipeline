@@ -399,7 +399,7 @@ int main() {
             printf("\n\nESTAGIO DE DECODIFICACAO (ID):");
             // Correção: Lê do ciclo passado (atual)
             reg_IdEX_prox = estagio_ID(reg_IfID_atual, registradores);
-            imprimir_instrucao(reg_ExMem_prox.instrucao);
+            imprimir_instrucao(reg_IdEX_prox.instrucao);
             printf("\nConteudo registrador pipeline ID/EX gerado:");
             printf("\nSaida 1 do banco de registradores:%d", reg_IdEX_prox.saida1_banco_reg);
             printf("\nSaida 2 do banco de registradores:%d", reg_IdEX_prox.saida2_banco_reg);
