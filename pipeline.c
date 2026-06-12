@@ -108,14 +108,34 @@ typedef struct metricas {
     int contInstReg;
     int contInstImm;
     int contInstJump;
+    int contClock;
+    int clockTime;
 } metricas;
+typedef struct nodoPilha nodoPilha;
+typedef struct descritorPilha descritorPilha;
+typedef struct nodoPilha
+{
+    nodoPilha *ant;
+    controle controle;
+    REG_pepiline_BI_ID PCInst;
+    REG_pepiline_ID_EX IDEX;
+    REG_pepiline_EX_MEM EXMEM;
+    REG_pepiline_MEM_WB MEMWB;
+    unidade_forwading forwarding;
+    sinais_controle_forwading controleForwarding;
+    metricas metricas;
+    int pc;
+} nodoPilha;
+
+typedef struct descritorPilha
+{
+    nodoPilha *topo;
+} descritorPilha;
+
 
 
 int registradores[8]={0, 1, 2, 0, 0, 10, 0, 0};
 int memoria[256] = {0};
-int oldreg[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-int oldmem[256] = {0};
-int oldpc=0;
 
 instrucao decodificar(char *bin);
 void imprimir_ass (char*bin, char** mem_instr, int k);
@@ -153,7 +173,8 @@ int mux_forwadingA(int entrada1,int entrada2,int entrada3,int sinal_forwading);
 int mux_forwadingB(int entrada1,int entrada2,int entrada3,int sinal_forwading);
 int mux_regDST(int rt,int rd,int sinal_regdst);
 int mux_memtoreg(int saida_mem,int saida_ula,int memtoreg);
-
+void pushStepback(descritorPilha *descritor, controle controle, REG_pepiline_BI_ID PCInst, REG_pepiline_ID_EX IDEX, REG_pepiline_EX_MEM EXMEM, REG_pepiline_MEM_WB MEMWB, unidade_forwading forwarding, sinais_controle_forwading controleForwarding, metricas metricas, int pc);
+void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_ID *PCInst, REG_pepiline_ID_EX *IDEX, REG_pepiline_EX_MEM *EXMEM, REG_pepiline_MEM_WB *MEMWB, unidade_forwading *forwarding, sinais_controle_forwading *controleForwarding, metricas *metricas, int *pc);
 
 int main() {
     FILE *mem = NULL;
@@ -162,7 +183,7 @@ int main() {
     int m = 256;
     int n = 16;
     int pc=0;
-    int memoria[256];
+    int memoria[256] = {0};
     int escolha=1;
     char bin[17];
     REG_pepiline_BI_ID   reg_IfID_atual  = {0};
@@ -178,12 +199,15 @@ int main() {
     controle c;
     sinais_controle_forwading Forwading_atual={0};
     sinais_controle_forwading Forwading_prox={0};
+    descritorPilha pilha;
+    pilha.topo = NULL;
     int saida_mem_wb=0;
     metricas metricas = {0};
     mem_instr = criameminstr(m, n);
     int temp_pc=0;
     int pc_prox=0;
-    printf("\n\nMenu de opcoes do programa");
+    printf("\n\n -=-=-= SIMULADOR MINI-MIPS 8 BITS PIPELINE =-=-=-\n\n\n Qual o tempo de clock do simulador (em ps)? ");
+    scanf("%i", &metricas.clockTime);
     do { printf("\n\n[1] Carregar memoria de instrucao");
      printf("\n[2] Carregar memoria de dados");
      printf("\n[3] Imprimir memoria de instrucoes e dados");
@@ -251,6 +275,7 @@ int main() {
         printf("Programa Executado!\n");
         break;
         case 9:
+            pushStepback(&pilha, c, reg_IfID_atual, reg_IdEX_atual, reg_ExMem_atual, reg_MemWb_atual, Forwading, Forwading_atual, metricas, pc);
             printf("\n================ CLOCK STEP ================\n");
 
             // 1. ETAPA DE BUSCA (IF)
@@ -283,7 +308,7 @@ int main() {
 
             // 3. ESTÁGIO DE EXECUÇÃO (EX) 
             printf("\n\nESTAGIO DE EXECUCAO (EX):");
-            saida_mem_wb=mux_memtoreg(reg_MemWb_atual.saida_memoria,reg_MemWb_atual.resultado_ula,reg_MemWb_atual.sinais_wb.MemToReg);
+            saida_mem_wb=mux_memtoreg(reg_MemWb_atual.saida_memoria, reg_MemWb_atual.resultado_ula, reg_MemWb_atual.sinais_wb.MemToReg);
             reg_ExMem_prox = estagio_ex(reg_IdEX_atual,reg_ExMem_atual.resultado_ula,saida_mem_wb,Forwading_atual);
             imprimir_instrucao(reg_ExMem_prox.instrucao);
             printf("\nValores do registrador pipeline EX/MEM gerado:");
@@ -339,6 +364,17 @@ int main() {
             printf("\n\nETAPA DE WRITE BACK (WB):");
             estagio_wb(reg_MemWb_atual, registradores);
             imprimir_instrucao(reg_MemWb_atual.instrucao);
+            /*if (reg_MemWb_atual.) {}     para garantir que o wb ta terminando uma instrução. nao achei como garantir que 
+            ele está terminando algo ou vazio, então deixei comentado. só ajeitar isso.*/ 
+            if (reg_MemWb_atual.instrucao.opcode == 0) {
+                metricas.contInstReg++;
+            }
+            else if(reg_MemWb_atual.instrucao.opcode == 2) {
+                metricas.contInstJump ++;
+            }
+            else {
+                metricas.contInstImm ++;
+            }
             imprimir_reg();  
 
 
@@ -349,16 +385,10 @@ int main() {
             Forwading_atual=Forwading_prox;
             pc=pc_prox;
             printf("\nPC atualizado para o proximo ciclo: %d\n", pc);
+            metricas.contClock ++;
             break;
          case 10:
-            pc = oldpc;
-             for(int j=0;j<256;j++){
-            memoria[j] = oldmem[j];}
-            for(int k=0;k<8;k++){
-            registradores[k] = oldreg[k];}
-            i = busca(bin, mem_instr, pc);
-            reduzir_metricas(&metricas, ultimainst);
-           printf("\nPC da proxima instrucao:%d",pc);
+            popStepback(&pilha, &c, &reg_IfID_atual, &reg_IdEX_atual, &reg_ExMem_atual, &reg_MemWb_atual, &Forwading, &Forwading_atual, &metricas, &pc);
            break;
          default:
              return 0;
@@ -769,14 +799,9 @@ int mux_jump(int sinal_jump,int entrada1,int entrada2)
 }
 void imprimir_mem_dados(int mem[]){
     printf("\n======memoria de dados======\n");
-    for (int i = 0; i < 16; i++) // linhas
+    for (int i = 0; i < 256; i++) // linhas
     {
-        for (int j = 0; j < 16; j++) // colunas
-        {
-            int idx = i * 16 + j;
-            printf("[%3d] =%4d |",idx, mem[idx]);
-        }
-
+        printf("[%3d] =%4d |",i, mem[i]);
         printf("\n");
     }
 }
@@ -850,12 +875,22 @@ void gerar_dat(int memoria[])
 }
 
 void mostrar_metricas(metricas m) {
+    float cpi = 0;
     printf("\n\n---Métricas---"
     "\nInstruções executadas: %i"
     "\nInstruções tipo R executadas: %i"
     "\nInstruções tipo I executadas: %i"
-    "\nInstruções tipo J executadas: %i",
-    m.contInst, m.contInstReg, m.contInstImm, m.contInstJump);
+    "\nInstruções tipo J executadas: %i"
+    "\nNúmero de clocks: %i"
+    "\nTempo de execução: %i ps",
+    m.contInst, m.contInstReg, m.contInstImm, m.contInstJump, m.contClock, m.contClock * m.clockTime);
+    if (m.contInst != 0) {
+        printf("\nCPI: %.2f\n\n", cpi);
+        cpi = (float)m.contClock/m.contInst;
+    }
+    else {
+        printf("\n Nenhuma instrução concluída ainda. Não é possível calcular CPI.\n\n");
+    }
     return;
 }
 
@@ -1231,4 +1266,51 @@ void estagio_wb(REG_pepiline_MEM_WB Mem,int banco_registrador[7])
         banco_registrador[Mem.registrador_destino]=saida_mux_memtoreg;
         return;
     }
+}
+
+void pushStepback(descritorPilha *descritor, controle controle, REG_pepiline_BI_ID PCInst, REG_pepiline_ID_EX IDEX, REG_pepiline_EX_MEM EXMEM, REG_pepiline_MEM_WB MEMWB, unidade_forwading forwarding, sinais_controle_forwading controleForwarding, metricas metricas, int pc)
+{
+    if (descritor == NULL) {
+        return;
+    }
+    nodoPilha *nodo = malloc(sizeof(nodoPilha));
+    nodo->ant = descritor->topo;
+    descritor->topo = nodo;
+
+    nodo->controle = controle;
+    nodo->controleForwarding = controleForwarding;
+    nodo->EXMEM = EXMEM;
+    nodo->forwarding = forwarding;
+    nodo->IDEX = IDEX;
+    nodo->MEMWB = MEMWB;
+    nodo->metricas = metricas;
+    nodo->PCInst = PCInst;
+    nodo->pc = pc;
+    return;
+}
+
+void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_ID *PCInst, REG_pepiline_ID_EX *IDEX, REG_pepiline_EX_MEM *EXMEM, REG_pepiline_MEM_WB *MEMWB, unidade_forwading *forwarding, sinais_controle_forwading *controleForwarding, metricas *metricas, int *pc)
+{
+    if (descritor == NULL) {
+        printf("\n\n Pilha não inicializada!");
+        return;
+    }
+    if (descritor->topo == NULL) {
+        printf("\n\n Pilha vazia!");
+        return;
+    }
+    nodoPilha *nodo = descritor->topo;
+
+    *controle = nodo->controle;
+    *controleForwarding = nodo->controleForwarding;
+    *EXMEM = nodo->EXMEM;
+    *forwarding = nodo->forwarding;
+    *IDEX = nodo->IDEX;
+    *MEMWB = nodo->MEMWB;
+    *metricas = nodo->metricas;
+    *PCInst = nodo->PCInst;
+    *pc = nodo->pc;
+    descritor->topo = nodo->ant;
+    free(nodo);
+    return;
 }
