@@ -131,10 +131,24 @@ typedef struct descritorPilha
 {
     nodoPilha *topo;
 } descritorPilha;
+typedef struct deteccao_hazard
+{
+    int ID_EX_READMEM;
+    int ID_EX_registradorRT;
+    int IF_ID_registradorRS;
+    int IF_ID_registradorRT;
+}entrada_unidade_hazard;
+typedef struct unidade_hazard
+{
+    int IF_ID_escrita;
+    int pc_escrita;
+    int sinal_mux_controle;
+
+}saida_unidade_hazard;
 
 
 
-int registradores[8]={0, 1, 2, 0, 0, 10, 0, 0};
+int registradores[8]={0, 1, 2, 0, 10, 0, 8, 0};
 int memoria[256] = {0};
 
 instrucao decodificar(char *bin);
@@ -173,6 +187,8 @@ int mux_forwadingA(int entrada1,int entrada2,int entrada3,int sinal_forwading);
 int mux_forwadingB(int entrada1,int entrada2,int entrada3,int sinal_forwading);
 int mux_regDST(int rt,int rd,int sinal_regdst);
 int mux_memtoreg(int saida_mem,int saida_ula,int memtoreg);
+REG_pepiline_ID_EX mux_sinais_controle(int sinal_unidade_hazard,REG_pepiline_ID_EX entrada1,REG_pepiline_ID_EX entrada2);
+saida_unidade_hazard unidade_hazard(entrada_unidade_hazard hazard_unidade);
 void pushStepback(descritorPilha *descritor, controle controle, REG_pepiline_BI_ID PCInst, REG_pepiline_ID_EX IDEX, REG_pepiline_EX_MEM EXMEM, REG_pepiline_MEM_WB MEMWB, unidade_forwading forwarding, sinais_controle_forwading controleForwarding, metricas metricas, int pc);
 void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_ID *PCInst, REG_pepiline_ID_EX *IDEX, REG_pepiline_EX_MEM *EXMEM, REG_pepiline_MEM_WB *MEMWB, unidade_forwading *forwarding, sinais_controle_forwading *controleForwarding, metricas *metricas, int *pc);
 
@@ -182,327 +198,226 @@ int main() {
     char ultimainst = 0;
     int m = 256;
     int n = 16;
-    int pc=0;
+    int pc = 0;
     int memoria[256] = {0};
-    int escolha=1;
+    int escolha = 1;
     char bin[17];
-    REG_pepiline_BI_ID   reg_IfID_atual  = {0};
-    REG_pepiline_ID_EX   reg_IdEX_atual  = {0};
-    REG_pepiline_EX_MEM  reg_ExMem_atual = {0};
-    REG_pepiline_MEM_WB  reg_MemWb_atual = {0};
-    REG_pepiline_BI_ID reg_IfID_prox={0};
-    REG_pepiline_ID_EX reg_IdEX_prox={0};
-    REG_pepiline_EX_MEM reg_ExMem_prox={0};
-    REG_pepiline_MEM_WB reg_MemWb_prox={0};
-    unidade_forwading Forwading;
+    
+    // 1. REGISTRADORES ÚNICOS (Sem atual/prox)
+    REG_pepiline_BI_ID   reg_IfID  = {0};
+    REG_pepiline_ID_EX   reg_IdEX  = {0};
+    REG_pepiline_EX_MEM  reg_ExMem = {0};
+    REG_pepiline_MEM_WB  reg_MemWb = {0};
+
+    unidade_forwading         entradas_forwarding = {0}; // Dados que entram na unidade
+    sinais_controle_forwading sinais_forwarding   = {0}; // Sinais (A e B) que saem da unidade
+
+    entrada_unidade_hazard entrada_hazard_unidade= {0};
+
     instrucao i;
-    controle c;
-    sinais_controle_forwading Forwading_atual={0};
-    sinais_controle_forwading Forwading_prox={0};
+    controle c = {0}; // Inicializado
     descritorPilha pilha;
     pilha.topo = NULL;
-    int saida_mem_wb=0;
+    int saida_mem_wb = 0;
     metricas metricas = {0};
     mem_instr = criameminstr(m, n);
-    int temp_pc=0;
-    int pc_prox=0;
+    int temp_pc = 0;
+    int pc_prox = 0;
+    
     printf("\n\n -=-=-= SIMULADOR MINI-MIPS 8 BITS PIPELINE =-=-=-\n\n\n Qual o tempo de clock do simulador (em ps)? ");
     scanf("%i", &metricas.clockTime);
-    do { printf("\n\n[1] Carregar memoria de instrucao");
-     printf("\n[2] Carregar memoria de dados");
-     printf("\n[3] Imprimir memoria de instrucoes e dados");
-     printf("\n[4] Imprimir banco de registradores");
-     printf("\n[5] Imprimir todo simulador");
-     printf("\n[6] Salvar .asm e .dat");
-     printf("\n[7] Mostrar Estatisticas do programa");
-     printf("\n[8] Executar programa(RUN)");
-     printf("\n[9] Executar um clock (STEP)");
-     printf("\n[10] Voltar uma instrucao");
-     printf("\n[0] Encerrar programa");
-     printf("\nescolha uma opcao: ");
-     scanf("%d",&escolha);
-     switch (escolha) {
-         case 1:
-             printf("\nCarregando memoria\n");
-             carregamem(mem_instr, m, n);
-             break;
-         case 2: 
-            carregadat(memoria);
-         break;
-         case 3:
-            imprimir_mem_instr(mem_instr,m,n, bin);
-            imprimir_mem_dados(memoria);
-         break;
-         case 4: printf("\nbanco de registradores\n");
-         imprimir_reg();
-         break;
-         case 5: printf("\nImprimindo banco de registradores e memória de dados:");
-            imprimir_mem_dados(memoria);
-            imprimir_reg();
-            printf("Instrução executada em ");
-            imprimir_instrucao(i);
-            printf("\nPC da proxima instrucao:%d",pc);
-         break;
-         case 6:
-            printf("\nArquivo  Assembly sendo gerado...");
-            strcpy(bin, mem_instr[temp_pc]);
-            while (strcmp(bin,"0000000000000000") !=0)
-            {
-                instrucao p=decodificar(bin);
-                gerar_asm(p,temp_pc,bin);
-                temp_pc++;
-                strcpy(bin, mem_instr[temp_pc]);                
-            }
-            printf("\nArquivo gerado!");
-            printf("\nArquivo sendo de dados sendo gerado....");
-            gerar_dat(memoria);
-            printf("\nArquivo gerado!");
-
-         break;
-         case 7:
-            printf("Estatisticas do programa: ");
-            mostrar_metricas(metricas);
-         break;
-         case 8:
-          do{
-            pushStepback(&pilha, c, reg_IfID_atual, reg_IdEX_atual, reg_ExMem_atual, reg_MemWb_atual, Forwading, Forwading_atual, metricas, pc);
-            printf("\n================ CLOCK STEP ================\n");
-
-            // 1. ETAPA DE BUSCA (IF)
-            printf("\nETAPA DE BUSCA (IF):");
-            printf("\npc:%d",pc);
-            reg_IfID_prox = estagio_busca(pc, mem_instr);
-            printf("\nConteudo registrador pipeline IF/ID gerado:");
-            printf("\nValor do somador do pc:%d", reg_IfID_prox.soma_pc);
-            printf("\nInstrucao:%s", reg_IfID_prox.instrucao);
-            pc_prox=reg_IfID_prox.soma_pc;
-            printf("\npc prox:%d",pc_prox);
-
-
-            // 2. ESTÁGIO DE DECODIFICAÇÃO (ID)
-            printf("\n\nESTAGIO DE DECODIFICACAO (ID):");
-            // Correção: Lê do ciclo passado (atual)
-            reg_IdEX_prox = estagio_ID(reg_IfID_atual, registradores);
-            imprimir_instrucao(reg_ExMem_prox.instrucao);
-            printf("\nConteudo registrador pipeline ID/EX gerado:");
-            printf("\nSaida 1 do banco de registradores:%d", reg_IdEX_prox.saida1_banco_reg);
-            printf("\nSaida 2 do banco de registradores:%d", reg_IdEX_prox.saida2_banco_reg);
-            printf("\nValor do jump:%d", reg_IdEX_prox.valor_jump);
-            printf("\nValor da soma pc:%d", reg_IdEX_prox.soma_pc);
-            printf("\nValor do rd:%d", reg_IdEX_prox.rd);
-            printf("\nValor do rt:%d", reg_IdEX_prox.rt);
-            printf("\nSinais de controle EX -> ALUOP:%d | RegDST:%d | ALUscr:%d", reg_IdEX_prox.sinais_ex.ALUOp, reg_IdEX_prox.sinais_ex.RegDst, reg_IdEX_prox.sinais_ex.ALUSrc);
-            printf("\nSinais de controle MEM -> Memwrite:%d | Branch:%d | Jump:%d", reg_IdEX_prox.sinais_mem.MemWrite, reg_IdEX_prox.sinais_mem.Branch, reg_IdEX_prox.sinais_mem.jump);
-            printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_IdEX_prox.sinais_wb.RegWrite, reg_IdEX_prox.sinais_wb.MemToReg);
-
-
-            // 3. ESTÁGIO DE EXECUÇÃO (EX) 
-            printf("\n\nESTAGIO DE EXECUCAO (EX):");
-            saida_mem_wb=mux_memtoreg(reg_MemWb_atual.saida_memoria, reg_MemWb_atual.resultado_ula, reg_MemWb_atual.sinais_wb.MemToReg);
-            reg_ExMem_prox = estagio_ex(reg_IdEX_atual,reg_ExMem_atual.resultado_ula,saida_mem_wb,Forwading_atual);
-            imprimir_instrucao(reg_ExMem_prox.instrucao);
-            printf("\nValores do registrador pipeline EX/MEM gerado:");
-            printf("\nSaida da ula:%d", reg_ExMem_prox.resultado_ula);
-            printf("\nSaida zero da ula:%d", reg_ExMem_prox.zero_ula);
-            printf("\nValor do jump:%d", reg_ExMem_prox.valor_jump);
-            printf("\nSoma do pc:%d", reg_ExMem_prox.soma_pc);
-            printf("\nRegistrador de destino:%d", reg_ExMem_prox.registrador_destino);
-            printf("\nEndereco de desvio:%d", reg_ExMem_prox.endereco_desvio);
-            printf("\nSaida 2 do banco de registradores:%d", reg_ExMem_prox.saida2_banco_registradores);
-            printf("\nSinais de controle MEM -> Memwrite:%d | Branch:%d | Jump:%d", reg_ExMem_prox.sinais_mem.MemWrite, reg_ExMem_prox.sinais_mem.Branch, reg_ExMem_prox.sinais_mem.jump);
-            printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_ExMem_prox.sinais_wb.RegWrite, reg_ExMem_prox.sinais_wb.MemToReg);
-
-
-            // 4. ETAPA DE ACESSO À MEMÓRIA (MEM)
-            printf("\n\nETAPA DE ACESSO A MEMORIA (MEM):");
-            Forwading.id_ex_RegRS=reg_IdEX_atual.rs;
-            Forwading.id_ex_RegRT=reg_IdEX_atual.rt;
-            Forwading.ex_mem_writeREG=reg_ExMem_atual.sinais_wb.RegWrite;
-            Forwading.ex_mem_RegRD=reg_ExMem_atual.registrador_destino;
-            Forwading.mem_wb_RegRD=reg_MemWb_atual.registrador_destino;
-            Forwading.Mem_WB_WriteREG=reg_MemWb_atual.sinais_wb.RegWrite;
-            Forwading_prox=forwading_unidade(Forwading);
-            reg_MemWb_prox = estagio_mem(reg_ExMem_atual, memoria, &pc_prox);
-            imprimir_instrucao(reg_MemWb_prox.instrucao);
-            printf("\npc proximo:%d",pc_prox);
-            printf("\nValores do registrador pipeline MEM/WB gerado:");
-            printf("\nRegistrador destino:%d", reg_MemWb_prox.registrador_destino);
-            printf("\nSaida da ula:%d", reg_MemWb_prox.resultado_ula);
-            printf("\nSaida da memoria:%d", reg_MemWb_prox.saida_memoria);
-            printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_MemWb_prox.sinais_wb.RegWrite, reg_MemWb_prox.sinais_wb.MemToReg);
-            
-            if(Forwading_prox.forwadingA != 0 || Forwading_prox.forwadingB != 0)
-            {
-                printf("\n==========================================================");
-                printf("\nDesvio da unidade de forwading feito novos valores do estagio EX:");
-                saida_mem_wb=mux_memtoreg(reg_MemWb_atual.saida_memoria,reg_MemWb_atual.resultado_ula,reg_MemWb_atual.sinais_wb.MemToReg);
-                reg_ExMem_prox = estagio_ex(reg_IdEX_atual,reg_ExMem_atual.resultado_ula,saida_mem_wb,Forwading_prox);
-                imprimir_instrucao(reg_ExMem_prox.instrucao);
-                printf("\nValores do registrador pipeline EX/MEM gerado:");
-                printf("\nSaida da ula:%d", reg_ExMem_prox.resultado_ula);
-                printf("\nSaida zero da ula:%d", reg_ExMem_prox.zero_ula);
-                printf("\nValor do jump:%d", reg_ExMem_prox.valor_jump);
-                printf("\nSoma do pc:%d", reg_ExMem_prox.soma_pc);
-                printf("\nRegistrador de destino:%d", reg_ExMem_prox.registrador_destino);
-                printf("\nEndereco de desvio:%d", reg_ExMem_prox.endereco_desvio);
-                printf("\nSaida 2 do banco de registradores:%d", reg_ExMem_prox.saida2_banco_registradores);
-                printf("\nSinais de controle MEM -> Memwrite:%d | Branch:%d | Jump:%d", reg_ExMem_prox.sinais_mem.MemWrite, reg_ExMem_prox.sinais_mem.Branch, reg_ExMem_prox.sinais_mem.jump);
-                printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_ExMem_prox.sinais_wb.RegWrite, reg_ExMem_prox.sinais_wb.MemToReg);
-                printf("\n===============================================================");
-            }
-            // 5. ETAPA DE WRITE BACK (WB)
-            printf("\n\nETAPA DE WRITE BACK (WB):");
-            estagio_wb(reg_MemWb_atual, registradores);
-            imprimir_instrucao(reg_MemWb_atual.instrucao);
-            /*if (reg_MemWb_atual.) {}     para garantir que o wb ta terminando uma instrução. nao achei como garantir que 
-            ele está terminando algo ou vazio, então deixei comentado. só ajeitar isso.*/ 
-            if (reg_MemWb_atual.instrucao.opcode == 0) {
-                metricas.contInstReg++;
-            }
-            else if(reg_MemWb_atual.instrucao.opcode == 2) {
-                metricas.contInstJump ++;
-            }
-            else {
-                metricas.contInstImm ++;
-            }
-            imprimir_reg();  
-
-
-            reg_IfID_atual  = reg_IfID_prox;
-            reg_IdEX_atual  = reg_IdEX_prox;
-            reg_ExMem_atual = reg_ExMem_prox;
-            reg_MemWb_atual = reg_MemWb_prox;
-            Forwading_atual=Forwading_prox;
-            pc=pc_prox;
-            printf("\nPC atualizado para o proximo ciclo: %d\n", pc);
-            metricas.contClock ++;
+    
+    do { 
+        printf("\n\n[1] Carregar memoria de instrucao");
+        printf("\n[2] Carregar memoria de dados");
+        printf("\n[3] Imprimir memoria de instrucoes e dados");
+        printf("\n[4] Imprimir banco de registradores");
+        printf("\n[5] Imprimir todo simulador");
+        printf("\n[6] Salvar .asm e .dat");
+        printf("\n[7] Mostrar Estatisticas do programa");
+        printf("\n[8] Executar programa(RUN)");
+        printf("\n[9] Executar um clock (STEP)");
+        printf("\n[10] Voltar uma instrucao");
+        printf("\n[0] Encerrar programa");
+        printf("\nescolha uma opcao: ");
+        scanf("%d",&escolha);
         
-        }while(pc<=255);
-        printf("Programa Executado!\n");
-        break;
-        case 9:
-            pushStepback(&pilha, c, reg_IfID_atual, reg_IdEX_atual, reg_ExMem_atual, reg_MemWb_atual, Forwading, Forwading_atual, metricas, pc);
-            printf("\n================ CLOCK STEP ================\n");
+        switch (escolha) {
+            case 1:
+                printf("\nCarregando memoria\n");
+                carregamem(mem_instr, m, n);
+                break;
+            case 2: 
+                carregadat(memoria);
+                break;
+            case 3:
+                imprimir_mem_instr(mem_instr, m, n, bin);
+                imprimir_mem_dados(memoria);
+                break;
+            case 4: 
+                printf("\nbanco de registradores\n");
+                imprimir_reg();
+                break;
+            case 5: 
+                printf("\nImprimindo banco de registradores e memoria de dados:\n");
+                imprimir_mem_dados(memoria);
+                imprimir_reg();
+                printf("PC da proxima instrucao:%d", pc);
+                break;
+            case 6:
+                printf("\nArquivo Assembly sendo gerado...");
+                strcpy(bin, mem_instr[temp_pc]);
+                while (strcmp(bin,"0000000000000000") != 0) {
+                    instrucao p = decodificar(bin);
+                    gerar_asm(p, temp_pc, bin);
+                    temp_pc++;
+                    strcpy(bin, mem_instr[temp_pc]);                
+                }
+                printf("\nArquivo gerado!");
+                printf("\nArquivo de dados sendo gerado....");
+                gerar_dat(memoria);
+                printf("\nArquivo gerado!");
+                break;
+            case 7:
+                printf("Estatisticas do programa: ");
+                mostrar_metricas(metricas);
+                break;
+                
+            case 8: // ================== RUN (Código unificado com o STEP) ==================
+            case 9: // ================== STEP ==================
+                if (escolha == 8) 
+                {
+                    printf("\n================ EXECUTANDO PROGRAMA (RUN) ================\n");
+                }
+                do 
+                {
+                    pushStepback(&pilha, c, reg_IfID, reg_IdEX, reg_ExMem, reg_MemWb, entradas_forwarding, sinais_forwarding, metricas, pc);
+                    
+                    if (escolha == 9) {
+                        printf("\n================ CLOCK STEP ================\n");
+                    }
 
-            // 1. ETAPA DE BUSCA (IF)
-            printf("\nETAPA DE BUSCA (IF):");
-            printf("\npc:%d",pc);
-            reg_IfID_prox = estagio_busca(pc, mem_instr);
-            printf("\nConteudo registrador pipeline IF/ID gerado:");
-            printf("\nValor do somador do pc:%d", reg_IfID_prox.soma_pc);
-            printf("\nInstrucao:%s", reg_IfID_prox.instrucao);
-            pc_prox=reg_IfID_prox.soma_pc;
-            printf("\npc prox:%d",pc_prox);
+                    // ====================================================================
+                    // PREPARAÇÃO DO PC
+                    // O próximo PC padrão sempre será o PC atual + 1 (usando seu somador). 
+                    // ====================================================================
+                    pc_prox = somador_pc(pc); 
 
 
-            // 2. ESTÁGIO DE DECODIFICAÇÃO (ID)
-            printf("\n\nESTAGIO DE DECODIFICACAO (ID):");
-            // Correção: Lê do ciclo passado (atual)
-            reg_IdEX_prox = estagio_ID(reg_IfID_atual, registradores);
-            imprimir_instrucao(reg_IdEX_prox.instrucao);
-            printf("\nConteudo registrador pipeline ID/EX gerado:");
-            printf("\nSaida 1 do banco de registradores:%d", reg_IdEX_prox.saida1_banco_reg);
-            printf("\nSaida 2 do banco de registradores:%d", reg_IdEX_prox.saida2_banco_reg);
-            printf("\nValor do jump:%d", reg_IdEX_prox.valor_jump);
-            printf("\nValor da soma pc:%d", reg_IdEX_prox.soma_pc);
-            printf("\nValor do rd:%d", reg_IdEX_prox.rd);
-            printf("\nValor do rt:%d", reg_IdEX_prox.rt);
-            printf("\nSinais de controle EX -> ALUOP:%d | RegDST:%d | ALUscr:%d", reg_IdEX_prox.sinais_ex.ALUOp, reg_IdEX_prox.sinais_ex.RegDst, reg_IdEX_prox.sinais_ex.ALUSrc);
-            printf("\nSinais de controle MEM -> Memwrite:%d | Branch:%d | Jump:%d", reg_IdEX_prox.sinais_mem.MemWrite, reg_IdEX_prox.sinais_mem.Branch, reg_IdEX_prox.sinais_mem.jump);
-            printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_IdEX_prox.sinais_wb.RegWrite, reg_IdEX_prox.sinais_wb.MemToReg);
+                    // 5. ETAPA DE WRITE BACK (WB)
+                    if (escolha == 9) printf("\n\nETAPA DE WRITE BACK (WB):");
+                    estagio_wb(reg_MemWb, registradores);
+                    if (escolha == 9) imprimir_instrucao(reg_MemWb.instrucao);
+                    
+                    if (reg_MemWb.instrucao.opcode == 0) {
+                        metricas.contInstReg++;
+                    } else if(reg_MemWb.instrucao.opcode == 2) {
+                        metricas.contInstJump++;
+                    } else {
+                        metricas.contInstImm++;
+                    }
+                    if (escolha == 9) imprimir_reg();  
 
 
-            // 3. ESTÁGIO DE EXECUÇÃO (EX) 
-            printf("\n\nESTAGIO DE EXECUCAO (EX):");
-            saida_mem_wb=mux_memtoreg(reg_MemWb_atual.saida_memoria, reg_MemWb_atual.resultado_ula, reg_MemWb_atual.sinais_wb.MemToReg);
-            reg_ExMem_prox = estagio_ex(reg_IdEX_atual,reg_ExMem_atual.resultado_ula,saida_mem_wb,Forwading_atual);
-            imprimir_instrucao(reg_ExMem_prox.instrucao);
-            printf("\nValores do registrador pipeline EX/MEM gerado:");
-            printf("\nSaida da ula:%d", reg_ExMem_prox.resultado_ula);
-            printf("\nSaida zero da ula:%d", reg_ExMem_prox.zero_ula);
-            printf("\nValor do jump:%d", reg_ExMem_prox.valor_jump);
-            printf("\nSoma do pc:%d", reg_ExMem_prox.soma_pc);
-            printf("\nRegistrador de destino:%d", reg_ExMem_prox.registrador_destino);
-            printf("\nEndereco de desvio:%d", reg_ExMem_prox.endereco_desvio);
-            printf("\nSaida 2 do banco de registradores:%d", reg_ExMem_prox.saida2_banco_registradores);
-            printf("\nSinais de controle MEM -> Memwrite:%d | Branch:%d | Jump:%d", reg_ExMem_prox.sinais_mem.MemWrite, reg_ExMem_prox.sinais_mem.Branch, reg_ExMem_prox.sinais_mem.jump);
-            printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_ExMem_prox.sinais_wb.RegWrite, reg_ExMem_prox.sinais_wb.MemToReg);
+                    // 4. ETAPA DE ACESSO A MEMORIA (MEM)
+                    if (escolha == 9) printf("\n\nETAPA DE ACESSO A MEMORIA (MEM):");
+                    
+                    // AQUI O MÁGICA ACONTECE: passamos &pc_prox. Se houver desvio, 
+                    // a função estagio_mem vai alterar o valor do pc_prox para o endereço alvo!
+                    reg_MemWb = estagio_mem(reg_ExMem, memoria, &pc_prox);
+                    
+                    if (escolha == 9) {
+                        imprimir_instrucao(reg_MemWb.instrucao);
+                        printf("\nValores do registrador pipeline MEM/WB gerado:");
+                        printf("\nRegistrador destino:%d", reg_MemWb.registrador_destino);
+                        printf("\nSaida da ula:%d", reg_MemWb.resultado_ula);
+                        printf("\nSaida da memoria:%d", reg_MemWb.saida_memoria);
+                        printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_MemWb.sinais_wb.RegWrite, reg_MemWb.sinais_wb.MemToReg);
+                    }
 
 
-            // 4. ETAPA DE ACESSO À MEMÓRIA (MEM)
-            printf("\n\nETAPA DE ACESSO A MEMORIA (MEM):");
-            Forwading.id_ex_RegRS=reg_IdEX_atual.rs;
-            Forwading.id_ex_RegRT=reg_IdEX_atual.rt;
-            Forwading.ex_mem_writeREG=reg_ExMem_atual.sinais_wb.RegWrite;
-            Forwading.ex_mem_RegRD=reg_ExMem_atual.registrador_destino;
-            Forwading.mem_wb_RegRD=reg_MemWb_atual.registrador_destino;
-            Forwading.Mem_WB_WriteREG=reg_MemWb_atual.sinais_wb.RegWrite;
-            Forwading_prox=forwading_unidade(Forwading);
-            reg_MemWb_prox = estagio_mem(reg_ExMem_atual, memoria, &pc_prox);
-            imprimir_instrucao(reg_MemWb_prox.instrucao);
-            printf("\npc proximo:%d",pc_prox);
-            printf("\nValores do registrador pipeline MEM/WB gerado:");
-            printf("\nRegistrador destino:%d", reg_MemWb_prox.registrador_destino);
-            printf("\nSaida da ula:%d", reg_MemWb_prox.resultado_ula);
-            printf("\nSaida da memoria:%d", reg_MemWb_prox.saida_memoria);
-            printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_MemWb_prox.sinais_wb.RegWrite, reg_MemWb_prox.sinais_wb.MemToReg);
+                    // 3. ESTAGIO DE EXECUCAO E FORWARDING (EX)
+                    if (escolha == 9) printf("\n\nESTAGIO DE EXECUCAO E FORWARDING (EX):");
+
+                    entradas_forwarding.id_ex_RegRS   = reg_IdEX.rs;
+                    entradas_forwarding.id_ex_RegRT   = reg_IdEX.rt;
+                    entradas_forwarding.ex_mem_writeREG = reg_ExMem.sinais_wb.RegWrite;
+                    entradas_forwarding.ex_mem_RegRD  = reg_ExMem.registrador_destino;
+                    entradas_forwarding.Mem_WB_WriteREG = reg_MemWb.sinais_wb.RegWrite;
+                    entradas_forwarding.mem_wb_RegRD  = reg_MemWb.registrador_destino;
+
+                    sinais_forwarding = forwading_unidade(entradas_forwarding);
+                    saida_mem_wb = mux_memtoreg(reg_MemWb.saida_memoria, reg_MemWb.resultado_ula, reg_MemWb.sinais_wb.MemToReg);
+
+                    if(sinais_forwarding.forwadingA != 0 || sinais_forwarding.forwadingB != 0) {
+                        if (escolha == 9) {
+                            printf("\n==========================================================");
+                            printf("\n[!] Desvio da unidade de Forwarding ativado! [A: %d, B: %d]", sinais_forwarding.forwadingA, sinais_forwarding.forwadingB);
+                            printf("\n==========================================================");
+                        }
+                    }
+
+                    reg_ExMem = estagio_ex(reg_IdEX, reg_ExMem.resultado_ula, saida_mem_wb, sinais_forwarding);
+
+                    if (escolha == 9) {
+                        imprimir_instrucao(reg_ExMem.instrucao);
+                        printf("\nValores do registrador pipeline EX/MEM gerado:");
+                        printf("\nSaida da ula:%d | Saida zero da ula:%d", reg_ExMem.resultado_ula, reg_ExMem.zero_ula);
+                        printf("\nRegistrador de destino:%d", reg_ExMem.registrador_destino);
+                        printf("\nEndereco de desvio:%d", reg_ExMem.endereco_desvio);
+                    }
+
+
+                    // 2. ESTAGIO DE DECODIFICACAO (ID)
+                    if (escolha == 9) printf("\n\nESTAGIO DE DECODIFICACAO (ID):");
+                    reg_IdEX = estagio_ID(reg_IfID, registradores);
+                    if (escolha == 9) {
+                        imprimir_instrucao(reg_IdEX.instrucao);
+                        printf("\nConteudo registrador pipeline ID/EX gerado:");
+                        printf("\nSaida 1 do banco de regs:%d | Saida 2:%d", reg_IdEX.saida1_banco_reg, reg_IdEX.saida2_banco_reg);
+                    }
+
+
+                    // 1. ETAPA DE BUSCA (IF)
+                    if (escolha == 9) printf("\n\nETAPA DE BUSCA (IF):");
+                    if (escolha == 9) printf("\npc atual:%d", pc);
+                    reg_IfID = estagio_busca(pc, mem_instr);
+                    if (escolha == 9) {
+                        printf("\nConteudo registrador pipeline IF/ID gerado:");
+                        printf("\nInstrucao:%s", reg_IfID.instrucao);
+                    }
+
+                    // ====================================================================
+                    // ATUALIZAÇÃO DO PC NO FINAL DO CLOCK
+                    // ====================================================================
+                    // O PC agora recebe o valor correto (PC+1 se for instrução normal, ou 
+                    // o valor modificado por estagio_mem se ocorreu um Jump/Branch).
+                    pc = pc_prox; 
+                    
+                    if (escolha == 9) printf("\n\n-> PC atualizado para o proximo ciclo: %d\n", pc);
+                    metricas.contClock++;
+                    
+                } while (escolha == 8 && pc <= 255);
+                // ... código posterior ...
+                
             
-            if(Forwading_prox.forwadingA != 0 || Forwading_prox.forwadingB != 0)
-            {
-                printf("\n==========================================================");
-                printf("\nDesvio da unidade de forwading feito novos valores do estagio EX:");
-                saida_mem_wb=mux_memtoreg(reg_MemWb_atual.saida_memoria,reg_MemWb_atual.resultado_ula,reg_MemWb_atual.sinais_wb.MemToReg);
-                reg_ExMem_prox = estagio_ex(reg_IdEX_atual,reg_ExMem_atual.resultado_ula,saida_mem_wb,Forwading_prox);
-                imprimir_instrucao(reg_ExMem_prox.instrucao);
-                printf("\nValores do registrador pipeline EX/MEM gerado:");
-                printf("\nSaida da ula:%d", reg_ExMem_prox.resultado_ula);
-                printf("\nSaida zero da ula:%d", reg_ExMem_prox.zero_ula);
-                printf("\nValor do jump:%d", reg_ExMem_prox.valor_jump);
-                printf("\nSoma do pc:%d", reg_ExMem_prox.soma_pc);
-                printf("\nRegistrador de destino:%d", reg_ExMem_prox.registrador_destino);
-                printf("\nEndereco de desvio:%d", reg_ExMem_prox.endereco_desvio);
-                printf("\nSaida 2 do banco de registradores:%d", reg_ExMem_prox.saida2_banco_registradores);
-                printf("\nSinais de controle MEM -> Memwrite:%d | Branch:%d | Jump:%d", reg_ExMem_prox.sinais_mem.MemWrite, reg_ExMem_prox.sinais_mem.Branch, reg_ExMem_prox.sinais_mem.jump);
-                printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_ExMem_prox.sinais_wb.RegWrite, reg_ExMem_prox.sinais_wb.MemToReg);
-                printf("\n===============================================================");
-            }
-            // 5. ETAPA DE WRITE BACK (WB)
-            printf("\n\nETAPA DE WRITE BACK (WB):");
-            estagio_wb(reg_MemWb_atual, registradores);
-            imprimir_instrucao(reg_MemWb_atual.instrucao);
-            /*if (reg_MemWb_atual.) {}     para garantir que o wb ta terminando uma instrução. nao achei como garantir que 
-            ele está terminando algo ou vazio, então deixei comentado. só ajeitar isso.*/ 
-            if (reg_MemWb_atual.instrucao.opcode == 0) {
-                metricas.contInstReg++;
-            }
-            else if(reg_MemWb_atual.instrucao.opcode == 2) {
-                metricas.contInstJump ++;
-            }
-            else {
-                metricas.contInstImm ++;
-            }
-            imprimir_reg();  
-
-
-            reg_IfID_atual  = reg_IfID_prox;
-            reg_IdEX_atual  = reg_IdEX_prox;
-            reg_ExMem_atual = reg_ExMem_prox;
-            reg_MemWb_atual = reg_MemWb_prox;
-            Forwading_atual=Forwading_prox;
-            pc=pc_prox;
-            printf("\nPC atualizado para o proximo ciclo: %d\n", pc);
-            metricas.contClock ++;
-            break;
-         case 10:
-            popStepback(&pilha, &c, &reg_IfID_atual, &reg_IdEX_atual, &reg_ExMem_atual, &reg_MemWb_atual, &Forwading, &Forwading_atual, &metricas, &pc);
-           break;
-         default:
-             return 0;
-             break;
-    }
-} while (escolha !=0);
-desalocameminstr(mem_instr, m, n);
-return 0;
+                if (escolha == 8) printf("\nPrograma Executado com sucesso!\n");
+                break;
+                
+            case 10:
+                // CORREÇÃO: popStepback atualizado
+                popStepback(&pilha, &c, &reg_IfID, &reg_IdEX, &reg_ExMem, &reg_MemWb, &entradas_forwarding, &sinais_forwarding, &metricas, &pc);
+                printf("\nPasso desfeito. PC retornou para: %d", pc);
+                break;
+                
+            default:
+                if (escolha != 0) printf("\nOpcao invalida!");
+                break;
+        }
+    } while (escolha != 0);
+    
+    desalocameminstr(mem_instr, m, n);
+    return 0;
 }
 
 
