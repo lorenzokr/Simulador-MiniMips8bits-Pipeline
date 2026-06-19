@@ -177,10 +177,10 @@ void mostrar_metricas(metricas m);
 void carregadat (int *mem_dados);
 void reduzir_metricas(metricas *m, char ultimaInst);
 REG_pepiline_BI_ID estagio_busca(int pc,char **mem_instr);
-REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[7]);
+REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entrada_unidade_hazard entrada_hazard_unidade,saida_unidade_hazard *saida_hazard_unidade);
 REG_pepiline_EX_MEM estagio_ex(REG_pepiline_ID_EX id,int ex_mem,int mem_wb,sinais_controle_forwading sinal_forwading);
 REG_pepiline_MEM_WB estagio_mem(REG_pepiline_EX_MEM ex,int memoria[],int *pc);
-void estagio_wb(REG_pepiline_MEM_WB Mem,int banco_registrador[7]);
+void estagio_wb(REG_pepiline_MEM_WB Mem,int banco_registrador[8]);
 int mux_ula_fonte(int rt,int imediato,int sinal_ula_fonte);
 sinais_controle_forwading forwading_unidade(unidade_forwading f);
 int mux_forwadingA(int entrada1,int entrada2,int entrada3,int sinal_forwading);
@@ -213,6 +213,13 @@ int main() {
     sinais_controle_forwading sinais_forwarding   = {0}; // Sinais (A e B) que saem da unidade
 
     entrada_unidade_hazard entrada_hazard_unidade= {0};
+
+    REG_pepiline_MEM_WB reg_MemWb_antigo;
+
+    saida_unidade_hazard saida_hazard_unidade;
+    saida_hazard_unidade.IF_ID_escrita=1;
+    saida_hazard_unidade.pc_escrita=1;
+    saida_hazard_unidade.sinal_mux_controle=0;
 
     instrucao i;
     controle c = {0}; // Inicializado
@@ -293,119 +300,131 @@ int main() {
                 {
                     pushStepback(&pilha, c, reg_IfID, reg_IdEX, reg_ExMem, reg_MemWb, entradas_forwarding, sinais_forwarding, metricas, pc);
                     
-                    if (escolha == 9) {
-                        printf("\n================ CLOCK STEP ================\n");
+                    if (escolha == 9) 
+                    {
+                        printf("\n\n================ CLOCK %d ================\n", metricas.contClock);
                     }
+                    pc_prox = somador_pc(pc);
 
-                    // ====================================================================
-                    // PREPARAÇÃO DO PC
-                    // O próximo PC padrão sempre será o PC atual + 1 (usando seu somador). 
-                    // ====================================================================
-                    pc_prox = somador_pc(pc); 
-
-
+                    // ---------------------------------------------------------
                     // 5. ETAPA DE WRITE BACK (WB)
-                    if (escolha == 9) printf("\n\nETAPA DE WRITE BACK (WB):");
+                    // ---------------------------------------------------------
                     estagio_wb(reg_MemWb, registradores);
-                    if (escolha == 9) imprimir_instrucao(reg_MemWb.instrucao);
+                    
+                    if (escolha == 9) {
+                        printf("\n[5] ETAPA DE WRITE BACK (WB):");
+                        imprimir_instrucao(reg_MemWb.instrucao);
+                        printf("\n -> Gravando no Banco de Registradores (se RegWrite=1).");
+                        imprimir_reg();  
+                    }
                     
                     if (reg_MemWb.instrucao.opcode == 0) {
                         metricas.contInstReg++;
                     } else if(reg_MemWb.instrucao.opcode == 2) {
                         metricas.contInstJump++;
-                    } else {
+                    } else if(reg_MemWb.instrucao.opcode != -1) { // Ignora contagem se for bolha (-1)
                         metricas.contInstImm++;
                     }
-                    if (escolha == 9) imprimir_reg();  
 
-
+                    // ---------------------------------------------------------
                     // 4. ETAPA DE ACESSO A MEMORIA (MEM)
-                    if (escolha == 9) printf("\n\nETAPA DE ACESSO A MEMORIA (MEM):");
-                    
-                    // AQUI O MÁGICA ACONTECE: passamos &pc_prox. Se houver desvio, 
-                    // a função estagio_mem vai alterar o valor do pc_prox para o endereço alvo!
+                    // ---------------------------------------------------------
+                    reg_MemWb_antigo = reg_MemWb;
                     reg_MemWb = estagio_mem(reg_ExMem, memoria, &pc_prox);
                     
                     if (escolha == 9) {
+                        printf("\n[4] ETAPA DE ACESSO A MEMORIA (MEM):");
                         imprimir_instrucao(reg_MemWb.instrucao);
-                        printf("\nValores do registrador pipeline MEM/WB gerado:");
-                        printf("\nRegistrador destino:%d", reg_MemWb.registrador_destino);
-                        printf("\nSaida da ula:%d", reg_MemWb.resultado_ula);
-                        printf("\nSaida da memoria:%d", reg_MemWb.saida_memoria);
-                        printf("\nSinais de controle WB -> Regwrite:%d | Memtoreg:%d", reg_MemWb.sinais_wb.RegWrite, reg_MemWb.sinais_wb.MemToReg);
+                        printf("\n -> [MEM/WB] Registrador destino: %d", reg_MemWb.registrador_destino);
+                        printf("\n -> [MEM/WB] Resultado ULA: %d", reg_MemWb.resultado_ula);
+                        printf("\n -> [MEM/WB] Saida da memoria: %d", reg_MemWb.saida_memoria);
+                        printf("\n -> [MEM/WB] Sinais p/ WB  [Regwrite: %d | Memtoreg: %d]\n", reg_MemWb.sinais_wb.RegWrite, reg_MemWb.sinais_wb.MemToReg);
                     }
 
-
+                    // ---------------------------------------------------------
                     // 3. ESTAGIO DE EXECUCAO E FORWARDING (EX)
-                    if (escolha == 9) printf("\n\nESTAGIO DE EXECUCAO E FORWARDING (EX):");
-
+                    // ---------------------------------------------------------
                     entradas_forwarding.id_ex_RegRS   = reg_IdEX.rs;
                     entradas_forwarding.id_ex_RegRT   = reg_IdEX.rt;
                     entradas_forwarding.ex_mem_writeREG = reg_ExMem.sinais_wb.RegWrite;
                     entradas_forwarding.ex_mem_RegRD  = reg_ExMem.registrador_destino;
-                    entradas_forwarding.Mem_WB_WriteREG = reg_MemWb.sinais_wb.RegWrite;
-                    entradas_forwarding.mem_wb_RegRD  = reg_MemWb.registrador_destino;
+                    entradas_forwarding.Mem_WB_WriteREG = reg_MemWb_antigo.sinais_wb.RegWrite;
+                    entradas_forwarding.mem_wb_RegRD  = reg_MemWb_antigo.registrador_destino;
 
                     sinais_forwarding = forwading_unidade(entradas_forwarding);
-                    saida_mem_wb = mux_memtoreg(reg_MemWb.saida_memoria, reg_MemWb.resultado_ula, reg_MemWb.sinais_wb.MemToReg);
-
-                    if(sinais_forwarding.forwadingA != 0 || sinais_forwarding.forwadingB != 0) {
-                        if (escolha == 9) {
-                            printf("\n==========================================================");
-                            printf("\n[!] Desvio da unidade de Forwarding ativado! [A: %d, B: %d]", sinais_forwarding.forwadingA, sinais_forwarding.forwadingB);
-                            printf("\n==========================================================");
-                        }
-                    }
+                    saida_mem_wb = mux_memtoreg(reg_MemWb_antigo.saida_memoria, reg_MemWb_antigo.resultado_ula, reg_MemWb_antigo.sinais_wb.MemToReg);
 
                     reg_ExMem = estagio_ex(reg_IdEX, reg_ExMem.resultado_ula, saida_mem_wb, sinais_forwarding);
 
                     if (escolha == 9) {
+                        printf("\n[3] ESTAGIO DE EXECUCAO E FORWARDING (EX):");
+                        if(sinais_forwarding.forwadingA != 0 || sinais_forwarding.forwadingB != 0) {
+                            printf("\n    [!] Forwarding Ativado [A: %d, B: %d]", sinais_forwarding.forwadingA, sinais_forwarding.forwadingB);
+                        }
                         imprimir_instrucao(reg_ExMem.instrucao);
-                        printf("\nValores do registrador pipeline EX/MEM gerado:");
-                        printf("\nSaida da ula:%d | Saida zero da ula:%d", reg_ExMem.resultado_ula, reg_ExMem.zero_ula);
-                        printf("\nRegistrador de destino:%d", reg_ExMem.registrador_destino);
-                        printf("\nEndereco de desvio:%d", reg_ExMem.endereco_desvio);
+                        printf("\n -> [EX/MEM] Saida da ULA: %d | Zero ULA: %d", reg_ExMem.resultado_ula, reg_ExMem.zero_ula);
+                        printf("\n -> [EX/MEM] Endereco de desvio (Branch): %d", reg_ExMem.endereco_desvio);
+                        printf("\n -> [EX/MEM] Registrador destino (MUX RegDst): %d", reg_ExMem.registrador_destino);
+                        printf("\n -> [EX/MEM] Dado p/ Escrita na Memoria (RT): %d", reg_ExMem.saida2_banco_registradores);
+                        printf("\n -> [EX/MEM] Sinais p/ MEM [Branch: %d | MemWrite: %d | Jump: %d]", reg_ExMem.sinais_mem.Branch, reg_ExMem.sinais_mem.MemWrite, reg_ExMem.sinais_mem.jump);
+                        printf("\n -> [EX/MEM] Sinais p/ WB  [RegWrite: %d | MemToReg: %d]\n", reg_ExMem.sinais_wb.RegWrite, reg_ExMem.sinais_wb.MemToReg);
                     }
 
-
-                    // 2. ESTAGIO DE DECODIFICACAO (ID)
-                    if (escolha == 9) printf("\n\nESTAGIO DE DECODIFICACAO (ID):");
-                    reg_IdEX = estagio_ID(reg_IfID, registradores);
+                    // ---------------------------------------------------------
+                    // 2. ESTAGIO DE DECODIFICACAO (ID) E HAZARD
+                    // ---------------------------------------------------------
+                    entrada_hazard_unidade.ID_EX_READMEM = (reg_IdEX.instrucao.opcode == 11) ? 1 : 0;
+                    entrada_hazard_unidade.ID_EX_registradorRT = reg_IdEX.rt;
+                    
+                    reg_IdEX = estagio_ID(reg_IfID, registradores, entrada_hazard_unidade, &saida_hazard_unidade);
+                    
                     if (escolha == 9) {
+                        printf("\n[2] ESTAGIO DE DECODIFICACAO (ID):");
+                        if(saida_hazard_unidade.sinal_mux_controle == 1) {
+                            printf("\n    [!] Hazard Detectado! Inserindo Bolha (NOP)...");
+                        }
                         imprimir_instrucao(reg_IdEX.instrucao);
-                        printf("\nConteudo registrador pipeline ID/EX gerado:");
-                        printf("\nSaida 1 do banco de regs:%d | Saida 2:%d", reg_IdEX.saida1_banco_reg, reg_IdEX.saida2_banco_reg);
+                        printf("\n -> [ID/EX] Saida RS (Dado 1): %d | Saida RT (Dado 2): %d", reg_IdEX.saida1_banco_reg, reg_IdEX.saida2_banco_reg);
+                        printf("\n -> [ID/EX] Imediato Estendido: %d", reg_IdEX.sinal_extendido);
+                        printf("\n -> [ID/EX] Registradores [RS: %d | RT: %d | RD: %d]", reg_IdEX.rs, reg_IdEX.rt, reg_IdEX.rd);
+                        printf("\n -> [ID/EX] Sinais p/ EX  [ALUOp: %d | ALUSrc: %d | RegDst: %d]", reg_IdEX.sinais_ex.ALUOp, reg_IdEX.sinais_ex.ALUSrc, reg_IdEX.sinais_ex.RegDst);
+                        printf("\n -> [ID/EX] Sinais p/ MEM [Branch: %d | MemWrite: %d | Jump: %d]", reg_IdEX.sinais_mem.Branch, reg_IdEX.sinais_mem.MemWrite, reg_IdEX.sinais_mem.jump);
+                        printf("\n -> [ID/EX] Sinais p/ WB  [RegWrite: %d | MemToReg: %d]\n", reg_IdEX.sinais_wb.RegWrite, reg_IdEX.sinais_wb.MemToReg);
                     }
 
-
+                    // ---------------------------------------------------------
                     // 1. ETAPA DE BUSCA (IF)
-                    if (escolha == 9) printf("\n\nETAPA DE BUSCA (IF):");
-                    if (escolha == 9) printf("\npc atual:%d", pc);
-                    reg_IfID = estagio_busca(pc, mem_instr);
-                    if (escolha == 9) {
-                        printf("\nConteudo registrador pipeline IF/ID gerado:");
-                        printf("\nInstrucao:%s", reg_IfID.instrucao);
+                    // ---------------------------------------------------------
+                    if (escolha == 9) printf("\n[1] ETAPA DE BUSCA (IF):");
+                    
+                    if (saida_hazard_unidade.IF_ID_escrita == 1) {
+                        reg_IfID = estagio_busca(pc, mem_instr);
+                        if (escolha == 9) {
+                            printf("\n -> Buscou a instrucao do PC %d", pc);
+                            printf("\n -> [IF/ID] Instrucao salva: %s", reg_IfID.instrucao);
+                            printf("\n -> [IF/ID] Soma PC (PC+1): %d", reg_IfID.soma_pc);
+                        }
+                    } else {
+                        if (escolha == 9) printf("\n    [!] STALL: Registrador IF/ID Congelado (mantendo instrucao anterior).");
                     }
 
-                    // ====================================================================
-                    // ATUALIZAÇÃO DO PC NO FINAL DO CLOCK
-                    // ====================================================================
-                    // O PC agora recebe o valor correto (PC+1 se for instrução normal, ou 
-                    // o valor modificado por estagio_mem se ocorreu um Jump/Branch).
-                    pc = pc_prox; 
+                    // =========================================================
+                    // ATUALIZAÇÃO DO PC 
+                    // =========================================================
+                    if (saida_hazard_unidade.pc_escrita == 1) {
+                        pc = pc_prox; 
+                    } else {
+                        if (escolha == 9) printf("\n    [!] STALL: PC Congelado em %d!", pc);
+                    }
+
+                    if (escolha == 9) printf("\n\n>>> PC atualizado para o proximo ciclo: %d <<<\n", pc);
                     
-                    if (escolha == 9) printf("\n\n-> PC atualizado para o proximo ciclo: %d\n", pc);
-                    metricas.contClock++;
-                    
+                    metricas.contClock++;      
                 } while (escolha == 8 && pc <= 255);
-                // ... código posterior ...
                 
-            
                 if (escolha == 8) printf("\nPrograma Executado com sucesso!\n");
                 break;
-                
             case 10:
-                // CORREÇÃO: popStepback atualizado
                 popStepback(&pilha, &c, &reg_IfID, &reg_IdEX, &reg_ExMem, &reg_MemWb, &entradas_forwarding, &sinais_forwarding, &metricas, &pc);
                 printf("\nPasso desfeito. PC retornou para: %d", pc);
                 break;
@@ -596,89 +615,12 @@ void imprimir_instrucao(instrucao p) {
         break;
     }
 }
-
-//Função que recebe a instrução convertida e decodifica os sinais de controle
-controle sinais_controle(instrucao i, metricas *m, char *ultimaInst){
-    controle c;
-    // Inicializa tudo com 0
-    c.RegDst = 0;
-    c.ALUSrc = 0;
-    c.MemToReg = 0;
-    c.RegWrite = 0;
-    c.MemRead = 0;
-    c.MemWrite = 0;
-    c.Branch = 0;
-    c.ALUOp = 0;
-    c.jump = 0;
-    m->contInst ++;
-    switch(i.opcode){
-        case 0:
-            // Tipo R
-            c.RegDst = 1;
-            c.ALUSrc = 0;
-            c.MemToReg = 0;
-            c.RegWrite = 1;
-            c.ALUOp = i.funct; // usa funct direto
-            m->contInstReg ++;
-            *ultimaInst = 'R';
-            break;
-        case 4:
-            // ADDI
-            c.RegDst = 0;
-            c.ALUSrc = 1;
-            c.RegWrite = 1;
-            c.ALUOp = 0;
-            m->contInstImm ++;
-            *ultimaInst = 'I';
-            break;
-        case 11:
-            // LW
-            c.ALUSrc = 1;
-            c.MemToReg = 1;
-            c.RegWrite = 1;
-            c.MemRead = 1;
-            m->contInstImm ++;
-            *ultimaInst = 'I';
-            break;
-        case 15:
-            // SW
-            c.ALUSrc = 1;
-            c.MemWrite = 1;
-            m->contInstImm ++;
-            *ultimaInst = 'I';
-            break;
-        case 8:
-            // BEQ
-            c.Branch = 1;
-            c.ALUOp = 2;
-            m->contInstImm ++;
-            *ultimaInst = 'I';
-            break;
-        case 2:
-            // JUMP
-            c.jump = 1;
-            m->contInstJump ++;
-            *ultimaInst = 'J';
-            break;
-
-    } return c;
-
-}
-
 //função que realiza a busca da instrução
 instrucao busca (char *bin, char **mem_instr, int pc){
     strcpy(bin, mem_instr[pc]);
     instrucao i = decodificar(bin);
     printf("\ninstrucao em binario:%s",bin);
     imprimir_instrucao(i); return i;
-}
-
-int mux1(controle c, instrucao i){
-    if(c.RegDst == 0){
-        return i.rt; }
-    else if(c.RegDst == 1){
-        return i.rd;
-    } return 0;
 }
 
 int ula(int op1, int op2, controle c, int *overflow,int *zero){
@@ -714,66 +656,6 @@ int ula(int op1, int op2, controle c, int *overflow,int *zero){
             return op1 | op2;
         default:
             return 0;
-    }
-}
-
-void executar(instrucao i, controle c, int *pc){
-    int op1;
-    int op2;
-    int resultado;
-    int destino;
-    int saida_muxBranch=0;
-    int resultado_soma_branch=0;
-    int overflow;
-    int zero;
-    //Extensão de sinal:
-    op1=registradores[i.rs];
-    i.imm=sign_extend6to8(i.imm);
-    // MUX da segunda entrada da ULA (ALUSrc)
-    if(c.ALUSrc == 1){
-        op2 = i.imm;
-    } else {
-        op2 = registradores[i.rt];
-    }
-    // Executa na ULA
-    resultado = ula(op1, op2, c, &overflow,&zero);
-    if(overflow){
-    printf("Overflow!\n");
-    return ;
-  }
-    // MUX do registrador destino
-    destino = mux1(c, i);
-    // Escreve no banco de registradores
-    if(c.RegWrite){
-        registradores[destino] = resultado;
-    }
-    // Branch
-    //primeiro a gente soma o valor do imediato com o valor do pc + 1 para saber valor da entrada 1 do mux branch
-    resultado_soma_branch=somador(i.imm,*pc+1);
-    //agora a gente vai selecionar atraves de um mux qual vai ser caminho selecionado o da soma do branch ou do pc
-    saida_muxBranch=mux_branch(c.Branch & zero,*pc+1,resultado_soma_branch);
-    //agora temos o resultado selecionado pelo mux do branch
-    //agora iremos fazer o mesmo com jump somar com pc +1
-    //agora iremos selecionar o resultado do mux do branch com o resultado da soma do jump e o item selecionado vai virar o pc
-    *pc=mux_jump(c.jump,saida_muxBranch,i.addr);
-    // Sw
-    if(c.MemWrite) {
-        lwsw(1, resultado, i.rt);
-    }
-    // Lw
-    if(c.MemRead) {
-        registradores[destino] = lwsw(2, resultado, i.rt);
-    }
-}
-
-int lwsw(int op, int endereco, int dado) {
-    if (op == 1)
-    {
-        memoria[endereco] = registradores[dado];
-        return 0;
-    }
-    else if (op == 2) {
-        return memoria[endereco];
     }
 }
 int sign_extend6to8(int imm)
@@ -934,6 +816,27 @@ void reduzir_metricas(metricas *m, char ultimaInst) {
     }
     return;
 }
+saida_unidade_hazard unidade_hazard(entrada_unidade_hazard hazard_unidade)
+{
+    saida_unidade_hazard saida_hazard_unidade;
+    if (hazard_unidade.ID_EX_READMEM &&((hazard_unidade.ID_EX_registradorRT == hazard_unidade.IF_ID_registradorRS) || (hazard_unidade.ID_EX_registradorRT == hazard_unidade.IF_ID_registradorRT)))
+    {
+        saida_hazard_unidade.IF_ID_escrita=0;
+        saida_hazard_unidade.pc_escrita=0;
+        saida_hazard_unidade.sinal_mux_controle=1;
+        printf("\n||===================================||");
+        printf("\n||INSERINDO NOP NO CAMINHO DE DADOS! ||");
+        printf("\n||===================================||");
+    }
+    else
+    {
+        saida_hazard_unidade.IF_ID_escrita=1;
+        saida_hazard_unidade.pc_escrita=1;
+        saida_hazard_unidade.sinal_mux_controle=0;
+
+    }
+    return saida_hazard_unidade;
+}
 sinais_controle_forwading forwading_unidade(unidade_forwading f)
 {
     sinais_controle_forwading s = {0};
@@ -966,6 +869,20 @@ sinais_controle_forwading forwading_unidade(unidade_forwading f)
     }
 
     return s; 
+}
+REG_pepiline_ID_EX mux_sinais_controle(int sinal_unidade_hazard,REG_pepiline_ID_EX entrada1,REG_pepiline_ID_EX entrada2)
+{
+    switch (sinal_unidade_hazard)
+    {
+    case 0:
+        return entrada1;
+        break;
+    case 1:
+        return entrada2;
+        break;
+    default:
+        break;
+    }
 }
 int mux_ula_fonte(int rt,int imediato,int sinal_ula_fonte)
 {
@@ -1150,16 +1067,21 @@ REG_pepiline_BI_ID estagio_busca(int pc,char **mem_instr)
     REG_pepiline_BI_ID r={0};
     strcpy(r.instrucao, mem_instr[pc]);
     r.soma_pc=somador_pc(pc);
-    return r;
-    
+    return r; 
 }
-REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[7])
+REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entrada_unidade_hazard entrada_hazard_unidade,saida_unidade_hazard *saida_hazard_unidade)
 {
     instrucao i;
     REG_pepiline_ID_EX id={0};
+    REG_pepiline_ID_EX entrada2={0};
+    REG_pepiline_ID_EX Registrador_id_ex={0};
     controle c;
     i=decodificar(r.instrucao);
     c=sinais_controle_pipeline(i);
+    entrada_hazard_unidade.IF_ID_registradorRS=i.rs;
+    entrada_hazard_unidade.IF_ID_registradorRT=i.rt;
+    *saida_hazard_unidade=unidade_hazard(entrada_hazard_unidade);
+
     id.instrucao=i;
     id.saida1_banco_reg=banco_registrador[i.rs];
     id.saida2_banco_reg=banco_registrador[i.rt];
@@ -1169,6 +1091,17 @@ REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[7])
     id.rd=i.rd;
     id.rt=i.rt;
     id.rs=i.rs;
+
+    entrada2.instrucao=id.instrucao;
+    entrada2.saida1_banco_reg=id.saida1_banco_reg;
+    entrada2.saida2_banco_reg=id.saida2_banco_reg;
+    entrada2.sinal_extendido=id.sinal_extendido;
+    entrada2.soma_pc=id.soma_pc;
+    entrada2.valor_jump=id.valor_jump;
+    entrada2.rd=id.rd;
+    entrada2.rs=id.rs;
+    entrada2.rt=id.rt;
+
     id.sinais_ex.ALUOp=c.ALUOp;
     id.sinais_ex.ALUSrc=c.ALUSrc;
     id.sinais_ex.RegDst=c.RegDst;
@@ -1177,6 +1110,8 @@ REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[7])
     id.sinais_mem.MemWrite=c.MemWrite;
     id.sinais_wb.MemToReg=c.MemToReg;
     id.sinais_wb.RegWrite=c.RegWrite;
+    Registrador_id_ex=mux_sinais_controle(saida_hazard_unidade->sinal_mux_controle,id,entrada2);
+    return Registrador_id_ex;
     return id;
 }
 REG_pepiline_EX_MEM estagio_ex(REG_pepiline_ID_EX id, int ex_mem, int mem_wb, sinais_controle_forwading sinal_forwading)
@@ -1269,7 +1204,7 @@ REG_pepiline_MEM_WB estagio_mem(REG_pepiline_EX_MEM ex, int memoria[], int *pc)
     
     return Mem;
 }
-void estagio_wb(REG_pepiline_MEM_WB Mem,int banco_registrador[7])
+void estagio_wb(REG_pepiline_MEM_WB Mem,int banco_registrador[8])
 {
     printf("\nEstagio WB");
     int saida_mux_memtoreg;
