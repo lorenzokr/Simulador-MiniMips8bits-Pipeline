@@ -125,6 +125,8 @@ typedef struct nodoPilha
     sinais_controle_forwading controleForwarding;
     metricas metricas;
     int pc;
+    int registradores[8];
+    int memoria[256];
 } nodoPilha;
 
 typedef struct descritorPilha
@@ -148,14 +150,12 @@ typedef struct unidade_hazard
 
 
 
-int registradores[8]={0, 1, 2, 0, 10, 0, 8, 0};
-int memoria[256] = {0};
 
 instrucao decodificar(char *bin);
 void imprimir_ass (char*bin, char** mem_instr, int k);
 void carregamem (char **mem_instr, int m, int n);
 void imprimir_mem_instr(char **mem_instr, int m, int n, char* bin);
-void imprimir_reg();
+void imprimir_reg(int registradores[8]);
 void imprimir_instrucao(instrucao p);
 char **criameminstr(int m, int n);
 void desalocameminstr(char **mem_instr, int m, int n);
@@ -189,8 +189,8 @@ int mux_regDST(int rt,int rd,int sinal_regdst);
 int mux_memtoreg(int saida_mem,int saida_ula,int memtoreg);
 REG_pepiline_ID_EX mux_sinais_controle(int sinal_unidade_hazard,REG_pepiline_ID_EX entrada1,REG_pepiline_ID_EX entrada2);
 saida_unidade_hazard unidade_hazard(entrada_unidade_hazard hazard_unidade);
-void pushStepback(descritorPilha *descritor, controle controle, REG_pepiline_BI_ID PCInst, REG_pepiline_ID_EX IDEX, REG_pepiline_EX_MEM EXMEM, REG_pepiline_MEM_WB MEMWB, unidade_forwading forwarding, sinais_controle_forwading controleForwarding, metricas metricas, int pc);
-void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_ID *PCInst, REG_pepiline_ID_EX *IDEX, REG_pepiline_EX_MEM *EXMEM, REG_pepiline_MEM_WB *MEMWB, unidade_forwading *forwarding, sinais_controle_forwading *controleForwarding, metricas *metricas, int *pc);
+void pushStepback(descritorPilha *descritor, controle controle, REG_pepiline_BI_ID PCInst, REG_pepiline_ID_EX IDEX, REG_pepiline_EX_MEM EXMEM, REG_pepiline_MEM_WB MEMWB, unidade_forwading forwarding, sinais_controle_forwading controleForwarding, metricas metricas, int pc, int regitradores[8], int memoria[256]);
+void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_ID *PCInst, REG_pepiline_ID_EX *IDEX, REG_pepiline_EX_MEM *EXMEM, REG_pepiline_MEM_WB *MEMWB, unidade_forwading *forwarding, sinais_controle_forwading *controleForwarding, metricas *metricas, int *pc, int registradores[8], int memoria[256]);
 
 int main() {
     FILE *mem = NULL;
@@ -199,6 +199,7 @@ int main() {
     int m = 256;
     int n = 16;
     int pc = 0;
+    int registradores[8]={0};
     int memoria[256] = {0};
     int escolha = 1;
     char bin[17];
@@ -263,12 +264,12 @@ int main() {
                 break;
             case 4: 
                 printf("\nbanco de registradores\n");
-                imprimir_reg();
+                imprimir_reg(registradores);
                 break;
             case 5: 
                 printf("\nImprimindo banco de registradores e memoria de dados:\n");
                 imprimir_mem_dados(memoria);
-                imprimir_reg();
+                imprimir_reg(registradores);
                 printf("PC da proxima instrucao:%d", pc);
                 break;
             case 6:
@@ -298,7 +299,7 @@ int main() {
                 }
                 do 
                 {
-                    pushStepback(&pilha, c, reg_IfID, reg_IdEX, reg_ExMem, reg_MemWb, entradas_forwarding, sinais_forwarding, metricas, pc);
+                    pushStepback(&pilha, c, reg_IfID, reg_IdEX, reg_ExMem, reg_MemWb, entradas_forwarding, sinais_forwarding, metricas, pc, registradores, memoria);
                     
                     if (escolha == 9) 
                     {
@@ -315,7 +316,7 @@ int main() {
                         printf("\n[5] ETAPA DE WRITE BACK (WB):");
                         imprimir_instrucao(reg_MemWb.instrucao);
                         printf("\n -> Gravando no Banco de Registradores (se RegWrite=1).");
-                        imprimir_reg();  
+                        imprimir_reg(registradores);  
                     }
                     
                     if (reg_MemWb.instrucao.opcode == 0) {
@@ -425,7 +426,7 @@ int main() {
                 if (escolha == 8) printf("\nPrograma Executado com sucesso!\n");
                 break;
             case 10:
-                popStepback(&pilha, &c, &reg_IfID, &reg_IdEX, &reg_ExMem, &reg_MemWb, &entradas_forwarding, &sinais_forwarding, &metricas, &pc);
+                popStepback(&pilha, &c, &reg_IfID, &reg_IdEX, &reg_ExMem, &reg_MemWb, &entradas_forwarding, &sinais_forwarding, &metricas, &pc, registradores, memoria);
                 printf("\nPasso desfeito. PC retornou para: %d", pc);
                 break;
                 
@@ -561,7 +562,7 @@ void imprimir_ass (char*bin, char** mem_instr, int k){
     imprimir_instrucao(i); 
 }
 
-void imprimir_reg() {
+void imprimir_reg(int registradores[8]) {
     int i;
     printf("\n=====BANCO DE REGISTRADORES=====\n");
     for ( i = 0; i < 8; i++) {
@@ -1221,7 +1222,7 @@ void estagio_wb(REG_pepiline_MEM_WB Mem,int banco_registrador[8])
     }
 }
 
-void pushStepback(descritorPilha *descritor, controle controle, REG_pepiline_BI_ID PCInst, REG_pepiline_ID_EX IDEX, REG_pepiline_EX_MEM EXMEM, REG_pepiline_MEM_WB MEMWB, unidade_forwading forwarding, sinais_controle_forwading controleForwarding, metricas metricas, int pc)
+void pushStepback(descritorPilha *descritor, controle controle, REG_pepiline_BI_ID PCInst, REG_pepiline_ID_EX IDEX, REG_pepiline_EX_MEM EXMEM, REG_pepiline_MEM_WB MEMWB, unidade_forwading forwarding, sinais_controle_forwading controleForwarding, metricas metricas, int pc, int registradores[8], int memoria[256])
 {
     if (descritor == NULL) {
         return;
@@ -1239,10 +1240,12 @@ void pushStepback(descritorPilha *descritor, controle controle, REG_pepiline_BI_
     nodo->metricas = metricas;
     nodo->PCInst = PCInst;
     nodo->pc = pc;
+    memcpy(nodo->registradores, registradores, sizeof(nodo->registradores));
+    memcpy(nodo->memoria, memoria, sizeof(nodo->memoria));
     return;
 }
 
-void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_ID *PCInst, REG_pepiline_ID_EX *IDEX, REG_pepiline_EX_MEM *EXMEM, REG_pepiline_MEM_WB *MEMWB, unidade_forwading *forwarding, sinais_controle_forwading *controleForwarding, metricas *metricas, int *pc)
+void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_ID *PCInst, REG_pepiline_ID_EX *IDEX, REG_pepiline_EX_MEM *EXMEM, REG_pepiline_MEM_WB *MEMWB, unidade_forwading *forwarding, sinais_controle_forwading *controleForwarding, metricas *metricas, int *pc, int registradores[8], int memoria[256])
 {
     if (descritor == NULL) {
         printf("\n\n Pilha não inicializada!");
@@ -1263,6 +1266,8 @@ void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_
     *metricas = nodo->metricas;
     *PCInst = nodo->PCInst;
     *pc = nodo->pc;
+    memcpy(registradores, nodo->registradores, sizeof(nodo->registradores));
+    memcpy(memoria, nodo->memoria, sizeof(nodo->memoria));
     descritor->topo = nodo->ant;
     free(nodo);
     return;
