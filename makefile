@@ -1,5 +1,5 @@
 compila:
-		gcc pipeline.c -o teste2 -g
+		gcc pipeline.c -o teste2 -g -lncurses
 		./teste2
 clear:
 		rm teste2
