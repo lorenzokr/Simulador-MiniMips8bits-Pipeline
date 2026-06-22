@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include<string.h>
 #include <stdint.h>
+#include <ncurses.h>
 
 FILE *mem = NULL;
 char **mem_instr = NULL;
@@ -107,9 +108,15 @@ typedef struct metricas {
     int contInst;
     int contInstReg;
     int contInstImm;
+    int num_desvio_condicional;
+    int lw;
+    int sw;
     int contInstJump;
     int contClock;
     int clockTime;
+    int contDataHazard;
+    int contControlHazard;
+    int num_stall;
 } metricas;
 typedef struct nodoPilha nodoPilha;
 typedef struct descritorPilha descritorPilha;
@@ -177,20 +184,26 @@ void mostrar_metricas(metricas m);
 void carregadat (int *mem_dados);
 void reduzir_metricas(metricas *m, char ultimaInst);
 REG_pepiline_BI_ID estagio_busca(int pc,char **mem_instr);
-REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entrada_unidade_hazard entrada_hazard_unidade,saida_unidade_hazard *saida_hazard_unidade);
+REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entrada_unidade_hazard entrada_hazard_unidade,saida_unidade_hazard *saida_hazard_unidade,metricas *m);
 REG_pepiline_EX_MEM estagio_ex(REG_pepiline_ID_EX id,int ex_mem,int mem_wb,sinais_controle_forwading sinal_forwading);
 REG_pepiline_MEM_WB estagio_mem(REG_pepiline_EX_MEM ex,int memoria[],int *pc);
 void estagio_wb(REG_pepiline_MEM_WB Mem,int banco_registrador[8]);
 int mux_ula_fonte(int rt,int imediato,int sinal_ula_fonte);
-sinais_controle_forwading forwading_unidade(unidade_forwading f);
+sinais_controle_forwading forwading_unidade(unidade_forwading f,metricas *m);
 int mux_forwadingA(int entrada1,int entrada2,int entrada3,int sinal_forwading);
 int mux_forwadingB(int entrada1,int entrada2,int entrada3,int sinal_forwading);
 int mux_regDST(int rt,int rd,int sinal_regdst);
 int mux_memtoreg(int saida_mem,int saida_ula,int memtoreg);
 REG_pepiline_ID_EX mux_sinais_controle(int sinal_unidade_hazard,REG_pepiline_ID_EX entrada1,REG_pepiline_ID_EX entrada2);
-saida_unidade_hazard unidade_hazard(entrada_unidade_hazard hazard_unidade);
+saida_unidade_hazard unidade_hazard(entrada_unidade_hazard hazard_unidade,metricas *m);
 void pushStepback(descritorPilha *descritor, controle controle, REG_pepiline_BI_ID PCInst, REG_pepiline_ID_EX IDEX, REG_pepiline_EX_MEM EXMEM, REG_pepiline_MEM_WB MEMWB, unidade_forwading forwarding, sinais_controle_forwading controleForwarding, metricas metricas, int pc, int regitradores[8], int memoria[256]);
 void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_ID *PCInst, REG_pepiline_ID_EX *IDEX, REG_pepiline_EX_MEM *EXMEM, REG_pepiline_MEM_WB *MEMWB, unidade_forwading *forwarding, sinais_controle_forwading *controleForwarding, metricas *metricas, int *pc, int registradores[8], int memoria[256]);
+
+void desenha_estatisticas(WINDOW *win, int largura, int altura, metricas m);
+void desenha_menu(WINDOW *win, int largura, int altura);
+void desenha_opcao(WINDOW *win, int largura, int altura);
+void desenha_registradores_pipeline(WINDOW *win, int largura, int altura, int reg[8], REG_pepiline_BI_ID ifid, REG_pepiline_ID_EX idex, REG_pepiline_EX_MEM exmem, REG_pepiline_MEM_WB memwb);
+void exibir_memorias_pipeline_ncurses(char **mem_inst, int *mem_dados);
 
 int main() {
     FILE *mem = NULL;
@@ -199,7 +212,7 @@ int main() {
     int m = 256;
     int n = 16;
     int pc = 0;
-    int registradores[8]={0};
+    int registradores[8]={0, 1, 2, 0, 10, 0, 8, 0};
     int memoria[256] = {0};
     int escolha = 1;
     char bin[17];
@@ -231,51 +244,133 @@ int main() {
     mem_instr = criameminstr(m, n);
     int temp_pc = 0;
     int pc_prox = 0;
+        initscr();
+    cbreak();
+    noecho();
+    refresh();
+
+    if (has_colors() == FALSE) {
+        endwin();
+        printf("Seu terminal nao suporta cores!\n");
+        return 1;
+    }
+    start_color();
+
+    init_pair(1, COLOR_CYAN, COLOR_BLACK);   
+    init_pair(2, COLOR_YELLOW, COLOR_BLACK); 
+    init_pair(3, COLOR_GREEN, COLOR_BLACK);  
+    init_pair(4, COLOR_RED, COLOR_BLACK);    
+    init_pair(5, COLOR_MAGENTA, COLOR_BLACK);    
+    init_pair(6, COLOR_WHITE, COLOR_BLACK);
+
+    int t_linhas, t_colunas;
+    getmaxyx(stdscr, t_linhas, t_colunas);
+
+    int margem_esquerda = 2; 
+    int margem_direita = 1;
     
-    printf("\n\n -=-=-= SIMULADOR MINI-MIPS 8 BITS PIPELINE =-=-=-\n\n\n Qual o tempo de clock do simulador (em ps)? ");
-    scanf("%i", &metricas.clockTime);
+    int largura_janela_esq = 65; 
+
+    // Mantido o limite de 31 linhas, que é o exato do seu terminal
+    if (t_linhas < 31 || t_colunas < 110) {
+        endwin();
+        printf("Erro: Maximize o terminal! Necessario: 31x110 | Seu: %dx%d\n", t_linhas, t_colunas);
+        return 1;
+    }
+
+    // =======================================================
+    // CÁLCULO DE POSICIONAMENTO (NOVO LAYOUT)
+    // =======================================================
     
+    // COLUNA DA ESQUERDA (Empilhadas perfeitamente para dar 31 linhas no total)
+    // 1. Estatísticas
+    int janela_estY = 0;
+    int janela_estX = margem_esquerda;
+    int altura_janela_est = 15;
+
+    // 2. Menu
+    int janela_menuY = janela_estY + altura_janela_est;
+    int janela_menuX = margem_esquerda;
+    int altura_janela_menu = 12;
+
+    // 3. Opções (No Canto Inferior Esquerdo)
+    int janela_opY = janela_menuY + altura_janela_menu;
+    int janela_opX = margem_esquerda;
+    int altura_janela_opcao = t_linhas - janela_opY; // Pega o resto das linhas na base (aprox 4)
+
+    // COLUNA DA DIREITA (Pipeline agora domina de cima a baixo!)
+    int janela_pipeY = 0; 
+    int janela_pipeX = janela_estX + largura_janela_esq + 1;
+    int largura_janela_pipe = t_colunas - janela_pipeX - margem_direita;
+    int altura_janela_pipe = t_linhas;
+
+    clear();
+    printw("\n\n -=-=-= SIMULADOR MINI-MIPS 8 BITS PIPELINE =-=-=-\n\n\n Qual o tempo de clock do simulador (em ps)? ");
+    echo(); 
+    scanw("%i", &metricas.clockTime); 
+    noecho();
+    clear(); 
+    refresh();
+
+    // Criação das janelas
+    WINDOW *janela_est = newwin(altura_janela_est, largura_janela_esq, janela_estY, janela_estX);
+    WINDOW *menu_win = newwin(altura_janela_menu, largura_janela_esq, janela_menuY, janela_menuX);
+    
+    // ATENÇÃO: A janela de opções agora usa a "largura_janela_esq" e não mais a do pipeline
+    WINDOW *janela_op = newwin(altura_janela_opcao, largura_janela_esq, janela_opY, janela_opX);
+    WINDOW *janela_pipe = newwin(altura_janela_pipe, largura_janela_pipe, janela_pipeY, janela_pipeX);
     do { 
-        printf("\n\n[1] Carregar memoria de instrucao");
-        printf("\n[2] Carregar memoria de dados");
-        printf("\n[3] Imprimir memoria de instrucoes e dados");
-        printf("\n[4] Imprimir banco de registradores");
-        printf("\n[5] Imprimir todo simulador");
-        printf("\n[6] Salvar .asm e .dat");
-        printf("\n[7] Mostrar Estatisticas do programa");
-        printf("\n[8] Executar programa(RUN)");
-        printf("\n[9] Executar um clock (STEP)");
-        printf("\n[10] Voltar uma instrucao");
-        printf("\n[0] Encerrar programa");
-        printf("\nescolha uma opcao: ");
-        scanf("%d",&escolha);
+        desenha_estatisticas(janela_est, largura_janela_esq, altura_janela_est,metricas);
+        desenha_menu(menu_win, largura_janela_esq, altura_janela_menu);
+        desenha_opcao(janela_op, largura_janela_esq, altura_janela_opcao);
+        desenha_registradores_pipeline(janela_pipe, largura_janela_pipe, altura_janela_pipe, registradores, reg_IfID, reg_IdEX, reg_ExMem, reg_MemWb);
+        // Atualização gráfica das janelas
+        wrefresh(janela_est); 
+        wrefresh(menu_win);
+        wrefresh(janela_op);
+        wrefresh(janela_pipe);
+
+        echo();
+        wmove(janela_op, altura_janela_opcao / 2, 23);
+        wscanw(janela_op, "%d", &escolha);
+        noecho();
         
-        switch (escolha) {
+        wclear(menu_win);
+        box(menu_win, 0, 0);
+
+        if (escolha > 0) 
+        {
+            def_prog_mode(); // Salva estado do ncurses
+            endwin();        // Sai do ncurses temporariamente
+        }
+        switch (escolha) 
+        {
             case 1:
+                wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
+                mvwprintw(menu_win, 2, 4, ">> OPCAO 1: CARREGAR MEM. INSTRUCOES <<");
+                wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
                 printf("\nCarregando memoria\n");
                 carregamem(mem_instr, m, n);
                 break;
             case 2: 
+                wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
+                mvwprintw(menu_win, 2, 4, ">> OPCAO 2: CARREGAR MEM. DADOS <<");
+                wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
+                printf("\nCarregando memoria de dados...\n");
                 carregadat(memoria);
                 break;
+            case 4:
+                exibir_memorias_pipeline_ncurses(mem_instr,memoria);
+                break;
             case 3:
-                imprimir_mem_instr(mem_instr, m, n, bin);
-                imprimir_mem_dados(memoria);
-                break;
-            case 4: 
-                printf("\nbanco de registradores\n");
-                imprimir_reg(registradores);
-                break;
-            case 5: 
-                printf("\nImprimindo banco de registradores e memoria de dados:\n");
-                imprimir_mem_dados(memoria);
-                imprimir_reg(registradores);
-                printf("PC da proxima instrucao:%d", pc);
-                break;
-            case 6:
+                wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
+                mvwprintw(menu_win, 2, 4, ">> OPCAO 3: SALVAR ASM E DAT <<");
+                wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
                 printf("\nArquivo Assembly sendo gerado...");
+                temp_pc = 0; // Previne erro caso rode a opção 3 mais de uma vez
                 strcpy(bin, mem_instr[temp_pc]);
-                while (strcmp(bin,"0000000000000000") != 0) {
+                while (strcmp(bin,"0000000000000000") != 0) 
+                {
                     instrucao p = decodificar(bin);
                     gerar_asm(p, temp_pc, bin);
                     temp_pc++;
@@ -285,24 +380,25 @@ int main() {
                 printf("\nArquivo de dados sendo gerado....");
                 gerar_dat(memoria);
                 printf("\nArquivo gerado!");
-                break;
-            case 7:
-                printf("Estatisticas do programa: ");
-                mostrar_metricas(metricas);
-                break;
-                
-            case 8: // ================== RUN (Código unificado com o STEP) ==================
-            case 9: // ================== STEP ==================
-                if (escolha == 8) 
+                break;    
+            case 6: // ================== RUN (Código unificado com o STEP) ==================
+            case 5: // ================== STEP ==================
+                if (escolha == 6) 
                 {
+                    wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
+                    mvwprintw(menu_win, 2, 4, ">> OPCAO 6: EXECUTAR PROGRAMA TODO <<");
+                    wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
                     printf("\n================ EXECUTANDO PROGRAMA (RUN) ================\n");
                 }
                 do 
                 {
                     pushStepback(&pilha, c, reg_IfID, reg_IdEX, reg_ExMem, reg_MemWb, entradas_forwarding, sinais_forwarding, metricas, pc, registradores, memoria);
                     
-                    if (escolha == 9) 
+                    if (escolha == 5) 
                     {
+                        wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
+                        mvwprintw(menu_win, 2, 4, ">> OPCAO 5: EXECUTAR UM CLOCK <<");
+                        wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
                         printf("\n\n================ CLOCK %d ================\n", metricas.contClock);
                     }
                     pc_prox = somador_pc(pc);
@@ -312,28 +408,23 @@ int main() {
                     // ---------------------------------------------------------
                     estagio_wb(reg_MemWb, registradores);
                     
-                    if (escolha == 9) {
+                    if (escolha == 5) 
+                    {
                         printf("\n[5] ETAPA DE WRITE BACK (WB):");
                         imprimir_instrucao(reg_MemWb.instrucao);
                         printf("\n -> Gravando no Banco de Registradores (se RegWrite=1).");
                         imprimir_reg(registradores);  
                     }
                     
-                    if (reg_MemWb.instrucao.opcode == 0) {
-                        metricas.contInstReg++;
-                    } else if(reg_MemWb.instrucao.opcode == 2) {
-                        metricas.contInstJump++;
-                    } else if(reg_MemWb.instrucao.opcode != -1) { // Ignora contagem se for bolha (-1)
-                        metricas.contInstImm++;
-                    }
-
+                   
                     // ---------------------------------------------------------
                     // 4. ETAPA DE ACESSO A MEMORIA (MEM)
                     // ---------------------------------------------------------
                     reg_MemWb_antigo = reg_MemWb;
                     reg_MemWb = estagio_mem(reg_ExMem, memoria, &pc_prox);
                     
-                    if (escolha == 9) {
+                    if (escolha == 5) 
+                    {
                         printf("\n[4] ETAPA DE ACESSO A MEMORIA (MEM):");
                         imprimir_instrucao(reg_MemWb.instrucao);
                         printf("\n -> [MEM/WB] Registrador destino: %d", reg_MemWb.registrador_destino);
@@ -352,12 +443,13 @@ int main() {
                     entradas_forwarding.Mem_WB_WriteREG = reg_MemWb_antigo.sinais_wb.RegWrite;
                     entradas_forwarding.mem_wb_RegRD  = reg_MemWb_antigo.registrador_destino;
 
-                    sinais_forwarding = forwading_unidade(entradas_forwarding);
+                    sinais_forwarding = forwading_unidade(entradas_forwarding,&metricas);
                     saida_mem_wb = mux_memtoreg(reg_MemWb_antigo.saida_memoria, reg_MemWb_antigo.resultado_ula, reg_MemWb_antigo.sinais_wb.MemToReg);
 
                     reg_ExMem = estagio_ex(reg_IdEX, reg_ExMem.resultado_ula, saida_mem_wb, sinais_forwarding);
 
-                    if (escolha == 9) {
+                    if (escolha == 5) 
+                    {
                         printf("\n[3] ESTAGIO DE EXECUCAO E FORWARDING (EX):");
                         if(sinais_forwarding.forwadingA != 0 || sinais_forwarding.forwadingB != 0) {
                             printf("\n    [!] Forwarding Ativado [A: %d, B: %d]", sinais_forwarding.forwadingA, sinais_forwarding.forwadingB);
@@ -377,11 +469,13 @@ int main() {
                     entrada_hazard_unidade.ID_EX_READMEM = (reg_IdEX.instrucao.opcode == 11) ? 1 : 0;
                     entrada_hazard_unidade.ID_EX_registradorRT = reg_IdEX.rt;
                     
-                    reg_IdEX = estagio_ID(reg_IfID, registradores, entrada_hazard_unidade, &saida_hazard_unidade);
+                    reg_IdEX = estagio_ID(reg_IfID, registradores, entrada_hazard_unidade, &saida_hazard_unidade,&metricas);
                     
-                    if (escolha == 9) {
+                    if (escolha == 5) 
+                    {
                         printf("\n[2] ESTAGIO DE DECODIFICACAO (ID):");
-                        if(saida_hazard_unidade.sinal_mux_controle == 1) {
+                        if(saida_hazard_unidade.sinal_mux_controle == 1) 
+                        {
                             printf("\n    [!] Hazard Detectado! Inserindo Bolha (NOP)...");
                         }
                         imprimir_instrucao(reg_IdEX.instrucao);
@@ -396,17 +490,18 @@ int main() {
                     // ---------------------------------------------------------
                     // 1. ETAPA DE BUSCA (IF)
                     // ---------------------------------------------------------
-                    if (escolha == 9) printf("\n[1] ETAPA DE BUSCA (IF):");
+                    if (escolha == 5) printf("\n[1] ETAPA DE BUSCA (IF):");
                     
                     if (saida_hazard_unidade.IF_ID_escrita == 1) {
                         reg_IfID = estagio_busca(pc, mem_instr);
-                        if (escolha == 9) {
+                        if (escolha == 5) 
+                        {
                             printf("\n -> Buscou a instrucao do PC %d", pc);
                             printf("\n -> [IF/ID] Instrucao salva: %s", reg_IfID.instrucao);
                             printf("\n -> [IF/ID] Soma PC (PC+1): %d", reg_IfID.soma_pc);
                         }
                     } else {
-                        if (escolha == 9) printf("\n    [!] STALL: Registrador IF/ID Congelado (mantendo instrucao anterior).");
+                        if (escolha == 5) printf("\n    [!] STALL: Registrador IF/ID Congelado (mantendo instrucao anterior).");
                     }
 
                     // =========================================================
@@ -415,17 +510,20 @@ int main() {
                     if (saida_hazard_unidade.pc_escrita == 1) {
                         pc = pc_prox; 
                     } else {
-                        if (escolha == 9) printf("\n    [!] STALL: PC Congelado em %d!", pc);
+                        if (escolha == 5) printf("\n    [!] STALL: PC Congelado em %d!", pc);
                     }
 
-                    if (escolha == 9) printf("\n\n>>> PC atualizado para o proximo ciclo: %d <<<\n", pc);
+                    if (escolha == 5) printf("\n\n>>> PC atualizado para o proximo ciclo: %d <<<\n", pc);
                     
                     metricas.contClock++;      
-                } while (escolha == 8 && pc <= 255);
+                } while (escolha == 6 && pc <= 255);
                 
-                if (escolha == 8) printf("\nPrograma Executado com sucesso!\n");
+                if (escolha == 6) printf("\nPrograma Executado com sucesso!\n");
                 break;
-            case 10:
+            case 7:
+                wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
+                mvwprintw(menu_win, 2, 4, ">> OPCAO 7:voltando um instrução <<");
+                wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
                 popStepback(&pilha, &c, &reg_IfID, &reg_IdEX, &reg_ExMem, &reg_MemWb, &entradas_forwarding, &sinais_forwarding, &metricas, &pc, registradores, memoria);
                 printf("\nPasso desfeito. PC retornou para: %d", pc);
                 break;
@@ -434,9 +532,18 @@ int main() {
                 if (escolha != 0) printf("\nOpcao invalida!");
                 break;
         }
+        if (escolha > 0) 
+        {
+            printf("\n\nPressione ENTER para voltar ao simulador...");
+            getchar(); // Limpa buffer do scanf anterior
+            getchar(); // Espera tecla
+            reset_prog_mode(); // Retorna ao ncurses
+            refresh();         // Atualiza a tela toda
+        }
     } while (escolha != 0);
-    
+    endwin();
     desalocameminstr(mem_instr, m, n);
+    printf("Simulador encerrado com sucesso.\n");
     return 0;
 }
 
@@ -817,7 +924,7 @@ void reduzir_metricas(metricas *m, char ultimaInst) {
     }
     return;
 }
-saida_unidade_hazard unidade_hazard(entrada_unidade_hazard hazard_unidade)
+saida_unidade_hazard unidade_hazard(entrada_unidade_hazard hazard_unidade,metricas *m)
 {
     saida_unidade_hazard saida_hazard_unidade;
     if (hazard_unidade.ID_EX_READMEM &&((hazard_unidade.ID_EX_registradorRT == hazard_unidade.IF_ID_registradorRS) || (hazard_unidade.ID_EX_registradorRT == hazard_unidade.IF_ID_registradorRT)))
@@ -825,6 +932,7 @@ saida_unidade_hazard unidade_hazard(entrada_unidade_hazard hazard_unidade)
         saida_hazard_unidade.IF_ID_escrita=0;
         saida_hazard_unidade.pc_escrita=0;
         saida_hazard_unidade.sinal_mux_controle=1;
+        m->num_stall+=1;
         printf("\n||===================================||");
         printf("\n||INSERINDO NOP NO CAMINHO DE DADOS! ||");
         printf("\n||===================================||");
@@ -838,12 +946,13 @@ saida_unidade_hazard unidade_hazard(entrada_unidade_hazard hazard_unidade)
     }
     return saida_hazard_unidade;
 }
-sinais_controle_forwading forwading_unidade(unidade_forwading f)
+sinais_controle_forwading forwading_unidade(unidade_forwading f,metricas *m)
 {
     sinais_controle_forwading s = {0};
     if (f.ex_mem_writeREG && (f.ex_mem_RegRD != 0) && (f.ex_mem_RegRD == f.id_ex_RegRS)) 
     {
         s.forwadingA = 2;
+        m->contDataHazard+=1;
         printf("\nDependecia detectada!");
         printf("\nEntre o registrador %d e %d",f.ex_mem_RegRD,f.id_ex_RegRS);
         printf("\nAtivando unidade de forwading A");
@@ -851,6 +960,7 @@ sinais_controle_forwading forwading_unidade(unidade_forwading f)
     else if (f.Mem_WB_WriteREG && (f.mem_wb_RegRD != 0) && (f.mem_wb_RegRD == f.id_ex_RegRS))
     {
         s.forwadingA = 1;
+        m->contDataHazard+=1;
         printf("\nDependecia detectada!");
         printf("\nEntre o registrador %d e %d",f.mem_wb_RegRD,f.id_ex_RegRS);
         printf("\nAtivando unidade de forwading A");
@@ -858,13 +968,15 @@ sinais_controle_forwading forwading_unidade(unidade_forwading f)
     }
     if (f.ex_mem_writeREG && (f.ex_mem_RegRD != 0) && (f.ex_mem_RegRD == f.id_ex_RegRT)) {
         s.forwadingB = 2;
+        m->contDataHazard+=1;
         printf("\nDependecia detectada!");
         printf("\nEntre o registrador %d e %d",f.ex_mem_RegRD,f.id_ex_RegRT);
         printf("\nAtivando unidade de forwading B");
     } 
     else if (f.Mem_WB_WriteREG && (f.mem_wb_RegRD != 0) && (f.mem_wb_RegRD == f.id_ex_RegRT)) {
         s.forwadingB = 1;
-         printf("\nDependecia detectada!");
+        m->contDataHazard+=1;
+        printf("\nDependecia detectada!");
         printf("\nEntre o registrador %d e %d",f.mem_wb_RegRD,f.id_ex_RegRT);
         printf("\nAtivando unidade de forwading B");
     }
@@ -961,7 +1073,7 @@ int mux_memtoreg(int saida_mem,int saida_ula,int memtoreg)
         break;
     }
 }
-controle sinais_controle_pipeline(instrucao i)
+controle sinais_controle_pipeline(instrucao i,metricas *m)
 {
     controle c;
     // Inicializa tudo com 0
@@ -977,14 +1089,19 @@ controle sinais_controle_pipeline(instrucao i)
     switch(i.opcode){
         case 0:
             // Tipo R
-            c.RegDst = 1;
-            c.ALUSrc = 0;
-            c.MemToReg = 1;
-            c.RegWrite = 1;
-            c.ALUOp = i.funct; // usa funct direto
+            if(i.rd != 0 && i.rs !=0 && i.rt != 0)
+            {
+                m->contInstReg+=1;
+                c.RegDst = 1;
+                c.ALUSrc = 0;
+                c.MemToReg = 1;
+                c.RegWrite = 1;
+                c.ALUOp = i.funct;
+            } // usa funct direto
             break;
         case 4:
             // ADDI
+            m->contInstImm+=1;
             c.RegDst = 0;
             c.ALUSrc = 1;
             c.RegWrite = 1;
@@ -993,6 +1110,8 @@ controle sinais_controle_pipeline(instrucao i)
             break;
         case 11:
             // LW
+            m->contInstImm+=1;
+            m->lw+=1;
             c.ALUSrc = 1;
             c.MemToReg = 0;
             c.RegWrite = 1;
@@ -1000,16 +1119,21 @@ controle sinais_controle_pipeline(instrucao i)
             break;
         case 15:
             // SW
+            m->contInstImm+=1;
+            m->sw+1;
             c.ALUSrc = 1;
             c.MemWrite = 1;
             break;
         case 8:
             // BEQ
+            m->contInstImm+=1;
+            m->num_desvio_condicional;
             c.Branch = 1;
             c.ALUOp = 2;
             break;
         case 2:
             // JUMP
+            m->contInstJump;
             c.jump = 1;
             break;
 
@@ -1070,7 +1194,7 @@ REG_pepiline_BI_ID estagio_busca(int pc,char **mem_instr)
     r.soma_pc=somador_pc(pc);
     return r; 
 }
-REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entrada_unidade_hazard entrada_hazard_unidade,saida_unidade_hazard *saida_hazard_unidade)
+REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entrada_unidade_hazard entrada_hazard_unidade,saida_unidade_hazard *saida_hazard_unidade,metricas *m)
 {
     instrucao i;
     REG_pepiline_ID_EX id={0};
@@ -1078,10 +1202,10 @@ REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entr
     REG_pepiline_ID_EX Registrador_id_ex={0};
     controle c;
     i=decodificar(r.instrucao);
-    c=sinais_controle_pipeline(i);
+    c=sinais_controle_pipeline(i,m);
     entrada_hazard_unidade.IF_ID_registradorRS=i.rs;
     entrada_hazard_unidade.IF_ID_registradorRT=i.rt;
-    *saida_hazard_unidade=unidade_hazard(entrada_hazard_unidade);
+    *saida_hazard_unidade=unidade_hazard(entrada_hazard_unidade,m);
 
     id.instrucao=i;
     id.saida1_banco_reg=banco_registrador[i.rs];
@@ -1271,4 +1395,367 @@ void popStepback(descritorPilha *descritor, controle *controle, REG_pepiline_BI_
     descritor->topo = nodo->ant;
     free(nodo);
     return;
+}
+void desenha_menu(WINDOW *win, int largura, int altura) {
+    wclear(win);
+    wattron(win, COLOR_PAIR(5));
+    box(win, 0, 0);
+    wattroff(win, COLOR_PAIR(5));
+
+    wattron(win, COLOR_PAIR(1) | A_BOLD); 
+    mvwprintw(win, 1, (largura / 2) - 14, "SIMULADOR MINI MIPS PIPELINE");
+    wattroff(win, COLOR_PAIR(1) | A_BOLD);
+
+    wattron(win, COLOR_PAIR(5));
+    mvwaddch(win, 2, 0, ACS_LTEE);  
+    mvwhline(win, 2, 1, 0, largura - 2);    
+    mvwaddch(win, 2, largura - 1, ACS_RTEE); 
+    wattroff(win, COLOR_PAIR(5)); 
+
+    mvwprintw(win, 3,  4, "[1] Carregar memoria de instrucoes");
+    mvwprintw(win, 4,  4, "[2] Carregar memoria de dados");
+    mvwprintw(win, 5,  4, "[3] Salvar asm e dat");
+    mvwprintw(win, 6,  4, "[4] Imprimir memoria de dados e instrucoes");
+    mvwprintw(win, 7,  4, "[5] Executar um clock");
+    mvwprintw(win, 8,  4, "[6] Executar um programa");
+    mvwprintw(win, 9,  4, "[7] Voltar um clock");
+    mvwprintw(win, 10,  4, "[0] Sair do programa");
+}
+void desenha_estatisticas(WINDOW *win, int largura, int altura, metricas m) 
+{
+    wclear(win);
+    wattron(win, COLOR_PAIR(2));
+    box(win, 0, 0);
+    int meio = largura / 2;
+    mvwaddch(win, 2, 0, ACS_LTEE);  
+    mvwhline(win, 2, 1, ACS_HLINE, largura - 2);    
+    mvwaddch(win, 2, largura - 1, ACS_RTEE); 
+    
+    mvwvline(win, 3, meio, ACS_VLINE, altura - 4);
+    mvwaddch(win, 2, meio, ACS_TTEE);
+    mvwaddch(win, altura - 1, meio, ACS_BTEE);
+    wattroff(win, COLOR_PAIR(6));
+
+    wattron(win, COLOR_PAIR(3) | A_BOLD);
+    mvwprintw(win, 1, (largura / 2) - 12, "ESTATISTICAS DO SIMULADOR");
+    wattroff(win, COLOR_PAIR(3) | A_BOLD);
+
+    int col1 = 2;
+    int col2 = meio + 2;
+
+    // Lado Esquerdo dinâmico
+    wattron(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE);
+    mvwprintw(win, 3, 2, "DESEMPENHO GLOBAL");
+    wattroff(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE);
+    mvwprintw(win, 5, 2, "Ciclos de clock: %d", m.contClock);
+    mvwprintw(win, 6, 2, "Instruções Uteis: %d", (m.contInstReg + m.contInstImm + m.contInstJump));
+    mvwprintw(win, 7, 2, "CPI real: %.2f", m.contClock > 0 ? (float)m.contClock / (m.contInstReg + m.contInstImm + m.contInstJump) : 0.0);
+    mvwprintw(win, 8, 2, "Tempo de clock: %d ps", m.clockTime);
+    wattron(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE);
+    mvwprintw(win, 10, 2, "EFICIENCIA E HAZARDS");
+    wattroff(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE);
+    mvwprintw(win, 11, 2, "Bolhas (Data Hazard): %d", m.num_stall); // Assumindo que você tem essa métrica
+    mvwprintw(win, 12, 2, "Flushes (Ctrl Hazard): %d", m.contControlHazard); // Assumindo que você tem essa métrica
+    mvwprintw(win, 13, 2, "Forwardings: %d",m.contDataHazard);
+
+    // Lado Direito dinâmico
+    int col_direita = meio + 2;
+    wattron(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE);
+    mvwprintw(win, 3,col_direita, "PERFIL DO PROGRAMA (MIX)");
+    wattroff(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE);
+    mvwprintw(win, 5, col_direita, "TIPO R: %d", m.contInstReg);
+    mvwprintw(win, 6, col_direita, "TIPO I (Imm): %d", m.contInstImm);
+    mvwprintw(win, 7, col_direita, "Leitura memoria: %d",m.lw);
+    mvwprintw(win, 8, col_direita, "Escrita memoria: %d",m.sw);
+    mvwprintw(win, 9, col_direita, "Desvio condicional:%d",m.num_desvio_condicional); // Ajuste com sua contagem real
+    mvwprintw(win, 10, col_direita, "Jump (Incond): %d", m.contInstJump);
+}
+void desenha_opcao(WINDOW *win, int largura, int altura) {
+    wclear(win);
+    wattron(win, COLOR_PAIR(3));
+    box(win, 0, 0);
+    // Centraliza o texto verticalmente dependendo da altura que sobrar
+    mvwprintw(win, altura / 2, 4, "Escolha uma opcao: "); 
+    wattroff(win, COLOR_PAIR(3));
+}
+// Função auxiliar para converter a struct instrucao em uma string legível
+void gerar_assembly_str(instrucao p, char *destino) {
+    int imm_ext;
+    switch (p.opcode) {
+        case 0:
+            switch (p.funct) {
+                case 0:
+                    sprintf(destino, "add $%d,$%d,$%d", p.rd, p.rs, p.rt);
+                    break;
+                case 2:
+                    sprintf(destino, "sub $%d,$%d,$%d", p.rd, p.rs, p.rt);
+                    break;
+                default:
+                    sprintf(destino, "nop");
+                    break;
+            }
+            break;
+
+        case 2:
+            sprintf(destino, "jump %d", p.addr);
+            break;
+
+        case 4:
+            imm_ext = sign_extend6to8(p.imm);
+            sprintf(destino, "addi $%d,$%d,%d", p.rt, p.rs, imm_ext);
+            break;
+
+        case 8:
+            imm_ext = sign_extend6to8(p.imm);
+            sprintf(destino, "beq $%d,$%d,%d", p.rs, p.rt, imm_ext);
+            break;
+
+        case 11:
+            imm_ext = sign_extend6to8(p.imm);
+            sprintf(destino, "lw $%d,%d($%d)", p.rt, imm_ext, p.rs);
+            break;
+
+        case 15:
+            imm_ext = sign_extend6to8(p.imm);
+            sprintf(destino, "sw $%d,%d($%d)", p.rt, imm_ext, p.rs);
+            break;
+
+        default:
+            sprintf(destino, "unknown");
+            break;
+    }
+}
+void desenha_registradores_pipeline(WINDOW *win, int largura, int altura, int reg[8], REG_pepiline_BI_ID ifid, REG_pepiline_ID_EX idex, REG_pepiline_EX_MEM exmem, REG_pepiline_MEM_WB memwb) 
+{
+    wclear(win);
+    wattron(win, COLOR_PAIR(4)); box(win, 0, 0); wattroff(win, COLOR_PAIR(4));
+
+    int meio = largura / 2;
+    int col1 = 2;          
+    int col2 = meio + 2; 
+    int y = 1; 
+    char txt_buffer[128];
+    char ass_str[64];
+    
+    // ==========================================
+    // BANCO REGISTRADORES
+    // ==========================================
+    wattron(win, COLOR_PAIR(6) | A_BOLD | A_REVERSE);
+    mvwprintw(win, y, 1, " BANCO DE REGISTRADORES %*s", largura - 26, ""); 
+    wattroff(win, COLOR_PAIR(6) | A_BOLD | A_REVERSE); y++;
+    
+    mvwprintw(win, y, col1, "R0:[%d]", reg[0]); mvwprintw(win, y, col2, "R4:[%d]", reg[4]); y++;
+    mvwprintw(win, y, col1, "R1:[%d]", reg[1]); mvwprintw(win, y, col2, "R5:[%d]", reg[5]); y++;
+    mvwprintw(win, y, col1, "R2:[%d]", reg[2]); mvwprintw(win, y, col2, "R6:[%d]", reg[6]); y++;
+    mvwprintw(win, y, col1, "R3:[%d]", reg[3]); mvwprintw(win, y, col2, "R7:[%d]", reg[7]); y++;
+    
+    wattron(win, COLOR_PAIR(4)); mvwaddch(win, y, 0, ACS_LTEE); mvwhline(win, y, 1, ACS_HLINE, largura - 2); mvwaddch(win, y, largura - 1, ACS_RTEE); wattroff(win, COLOR_PAIR(4)); y++;
+
+    // ==========================================
+    // IF/ID
+    // ==========================================
+    // No IF/ID, 'ifid.instrucao' é a string pura de bits recebida
+    snprintf(txt_buffer, sizeof(txt_buffer), " IF/ID  ->  [ %s ]", ifid.instrucao);
+    
+    wattron(win, COLOR_PAIR(1) | A_BOLD | A_REVERSE);
+    mvwprintw(win, y, 1, "%-*s", largura - 2, txt_buffer); 
+    wattroff(win, COLOR_PAIR(1) | A_BOLD | A_REVERSE); y++;
+    
+    mvwprintw(win, y, col1, "Inst: %s", ifid.instrucao); y++;
+    mvwprintw(win, y, col1, "PC+1: %d", ifid.soma_pc); y++;
+    
+    wattron(win, COLOR_PAIR(4)); mvwaddch(win, y, 0, ACS_LTEE); mvwhline(win, y, 1, ACS_HLINE, largura - 2); mvwaddch(win, y, largura - 1, ACS_RTEE); wattroff(win, COLOR_PAIR(4)); y++;
+
+    // ==========================================
+    // ID/EX
+    // ==========================================
+    // Acessando a struct interna: idex.instrucao
+    gerar_assembly_str(idex.instrucao, ass_str);
+    snprintf(txt_buffer, sizeof(txt_buffer), " ID/EX  ->  [ %s ]", ass_str);
+
+    wattron(win, COLOR_PAIR(2) | A_BOLD | A_REVERSE);
+    mvwprintw(win, y, 1, "%-*s", largura - 2, txt_buffer); 
+    wattroff(win, COLOR_PAIR(2) | A_BOLD | A_REVERSE); y++;
+    
+    mvwprintw(win, y, col1, "Saida RS: %d", idex.saida1_banco_reg); mvwprintw(win, y, col2, "Saida RT: %d", idex.saida2_banco_reg); y++;
+    mvwprintw(win, y, col1, "Imed Estendido: %d", idex.sinal_extendido); mvwprintw(win, y, col2, "Regs [RS:%d RT:%d RD:%d]", idex.rs, idex.rt, idex.rd); y++;
+    mvwprintw(win, y, col1, "Sinais EX  [ALUOp:%d ALUSrc:%d RegDst:%d]", idex.sinais_ex.ALUOp, idex.sinais_ex.ALUSrc, idex.sinais_ex.RegDst); y++;
+    mvwprintw(win, y, col1, "Sinais MEM [Branch:%d MemWrt:%d Jump:%d]", idex.sinais_mem.Branch, idex.sinais_mem.MemWrite, idex.sinais_mem.jump); y++;
+    mvwprintw(win, y, col1, "Sinais WB  [RegWrt:%d M2R:%d]", idex.sinais_wb.RegWrite, idex.sinais_wb.MemToReg); y++;
+    
+    wattron(win, COLOR_PAIR(4)); mvwaddch(win, y, 0, ACS_LTEE); mvwhline(win, y, 1, ACS_HLINE, largura - 2); mvwaddch(win, y, largura - 1, ACS_RTEE); wattroff(win, COLOR_PAIR(4)); y++;
+
+    // ==========================================
+    // EX/MEM
+    // ==========================================
+    // Acessando a struct interna: exmem.instrucao
+    gerar_assembly_str(exmem.instrucao, ass_str);
+    snprintf(txt_buffer, sizeof(txt_buffer), " EX/MEM  ->  [ %s ]", ass_str);
+
+    wattron(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE);
+    mvwprintw(win, y, 1, "%-*s", largura - 2, txt_buffer); 
+    wattroff(win, COLOR_PAIR(3) | A_BOLD | A_REVERSE); y++;
+    
+    mvwprintw(win, y, col1, "Res ULA: %d", exmem.resultado_ula); mvwprintw(win, y, col2, "Zero: %d", exmem.zero_ula); y++;
+    mvwprintw(win, y, col1, "End Desvio: %d", exmem.endereco_desvio); mvwprintw(win, y, col2, "Dado p/ Mem: %d", exmem.saida2_banco_registradores); y++;
+    mvwprintw(win, y, col1, "Reg Destino: %d", exmem.registrador_destino); y++;
+    mvwprintw(win, y, col1, "Sinais MEM [Branch:%d MemWrt:%d Jump:%d]", exmem.sinais_mem.Branch, exmem.sinais_mem.MemWrite, exmem.sinais_mem.jump); y++;
+    mvwprintw(win, y, col1, "Sinais WB  [RegWrt:%d M2R:%d]", exmem.sinais_wb.RegWrite, exmem.sinais_wb.MemToReg); y++;
+    
+    wattron(win, COLOR_PAIR(4)); mvwaddch(win, y, 0, ACS_LTEE); mvwhline(win, y, 1, ACS_HLINE, largura - 2); mvwaddch(win, y, largura - 1, ACS_RTEE); wattroff(win, COLOR_PAIR(4)); y++;
+
+    // ==========================================
+    // MEM/WB
+    // ==========================================
+    // Acessando a struct interna: memwb.instrucao
+    gerar_assembly_str(memwb.instrucao, ass_str);
+    snprintf(txt_buffer, sizeof(txt_buffer), " MEM/WB  ->  [ %s ]", ass_str);
+
+    wattron(win, COLOR_PAIR(5) | A_BOLD | A_REVERSE);
+    mvwprintw(win, y, 1, "%-*s", largura - 2, txt_buffer); 
+    wattroff(win, COLOR_PAIR(5) | A_BOLD | A_REVERSE); y++;
+    
+    mvwprintw(win, y, col1, "Res ULA: %d", memwb.resultado_ula); mvwprintw(win, y, col2, "Saida Mem: %d", memwb.saida_memoria); y++;
+    mvwprintw(win, y, col1, "Reg Destino: %d", memwb.registrador_destino); y++;
+    mvwprintw(win, y, col1, "Sinais WB  [RegWrite:%d MemToReg:%d]", memwb.sinais_wb.RegWrite, memwb.sinais_wb.MemToReg);
+}
+void exibir_memorias_pipeline_ncurses(char **mem_inst, int *mem_dados) 
+{
+    clear();
+    refresh();
+    int margem = 1;
+    int alt = LINES - 3; 
+    int larg = (COLS - 3) / 2; 
+    
+    // Criação das janelas separadas
+    WINDOW *w_inst = newwin(alt, larg, margem, margem);
+    WINDOW *w_data = newwin(alt, larg, margem, margem + larg + 1);
+
+    keypad(stdscr, TRUE); 
+    nodelay(stdscr, FALSE); 
+
+    int topo_inst = 0, topo_dados = 0;
+    int max_visiveis = alt - 6;
+    int rodando = 1;
+    char bin[17];
+    char ass_str[64];
+
+    while(rodando) {
+        werase(w_inst); box(w_inst, 0, 0);
+        werase(w_data); box(w_data, 0, 0);
+
+        // ====================================================
+        // CABEÇALHO: MEMÓRIA DE INSTRUÇÕES (Esquerda)
+        // ====================================================
+        wattron(w_inst, A_REVERSE | COLOR_PAIR(2));
+        mvwprintw(w_inst, 1, (larg - 23)/2, " MEMÓRIA DE INSTRUÇÕES ");
+        wattroff(w_inst, A_REVERSE | COLOR_PAIR(2));
+        mvwhline(w_inst, 2, 1, ACS_HLINE, larg - 2);
+        
+        wattron(w_inst, COLOR_PAIR(1) | A_BOLD);
+        mvwprintw(w_inst, 3, 2, "End");
+        mvwprintw(w_inst, 3, 7, "Binário (16 bits)");
+        mvwprintw(w_inst, 3, 26, "Assembly");
+        wattroff(w_inst, COLOR_PAIR(1) | A_BOLD);
+        mvwhline(w_inst, 4, 1, ACS_HLINE, larg - 2);
+
+        // ====================================================
+        // CABEÇALHO: MEMÓRIA DE DADOS (Direita)
+        // ====================================================
+        wattron(w_data, A_REVERSE | COLOR_PAIR(3));
+        mvwprintw(w_data, 1, (larg - 18)/2, " MEMÓRIA DE DADOS ");
+        wattroff(w_data, A_REVERSE | COLOR_PAIR(3));
+        mvwhline(w_data, 2, 1, ACS_HLINE, larg - 2);
+        
+        wattron(w_data, COLOR_PAIR(1) | A_BOLD);
+        mvwprintw(w_data, 3, 2, "End");
+        mvwprintw(w_data, 3, 7, "Valor Armazenado");
+        wattroff(w_data, COLOR_PAIR(1) | A_BOLD);
+        mvwhline(w_data, 4, 1, ACS_HLINE, larg - 2);
+
+        // ====================================================
+        // PREENCHENDO INSTRUÇÕES (char **)
+        // ====================================================
+        for (int i = 0; i < max_visiveis; i++) {
+            int k = topo_inst + i;
+            if (k >= 256) break;
+            int y = 5 + i;
+
+            mvwprintw(w_inst, y, 2, "%3d", k); mvwaddch(w_inst, y, 6, ACS_VLINE);
+
+            // Verifica se a string existe e se não está vazia para não quebrar
+            if (mem_inst == NULL || mem_inst[k] == NULL || mem_inst[k][0] == '\0' || mem_inst[k][0] == ' ' || mem_inst[k][0] == '\n') {
+                wattron(w_inst, COLOR_PAIR(5));
+                mvwprintw(w_inst, y, 8, "0000000000000000"); mvwaddch(w_inst, y, 25, ACS_VLINE);
+                mvwprintw(w_inst, y, 27, "--- vazio ---");
+                wattroff(w_inst, COLOR_PAIR(5));
+            } else {
+                strncpy(bin, mem_inst[k], 16); bin[16] = '\0';
+                wattron(w_inst, COLOR_PAIR(3)); mvwprintw(w_inst, y, 8, "%s", bin); wattroff(w_inst, COLOR_PAIR(3));
+                mvwaddch(w_inst, y, 25, ACS_VLINE);
+
+                instrucao inst = decodificar(bin);
+                gerar_assembly_str(inst, ass_str); 
+                
+                wattron(w_inst, COLOR_PAIR(4)); mvwprintw(w_inst, y, 27, "%s", ass_str); wattroff(w_inst, COLOR_PAIR(4));
+            }
+        }
+
+        // ====================================================
+        // PREENCHENDO DADOS (int *)
+        // ====================================================
+        for (int i = 0; i < max_visiveis; i++) {
+            int k = topo_dados + i;
+            if (k >= 256) break;
+            int y = 5 + i;
+
+            mvwprintw(w_data, y, 2, "%3d", k); mvwaddch(w_data, y, 6, ACS_VLINE);
+
+            // Acesso direto ao valor inteiro
+            int valor = mem_dados[k];
+
+            if (valor == 0) {
+                wattron(w_data, COLOR_PAIR(5));
+                mvwprintw(w_data, y, 8, "%d (vazio)", valor);
+                wattroff(w_data, COLOR_PAIR(5));
+            } else {
+                wattron(w_data, COLOR_PAIR(4)); 
+                mvwprintw(w_data, y, 8, "%d", valor); 
+                wattroff(w_data, COLOR_PAIR(4));
+            }
+        }
+
+        wrefresh(w_inst);
+        wrefresh(w_data);
+
+        // ====================================================
+        // MENU INFERIOR GERAL
+        // ====================================================
+        attron(COLOR_PAIR(5) | A_BOLD | A_REVERSE);
+        mvprintw(LINES - 2, (COLS - 75)/2, " [SETAS]: Rolar Instrucoes | [W/S]: Rolar Dados | [ENTER]: Voltar ao Menu ");
+        attroff(COLOR_PAIR(5) | A_BOLD | A_REVERSE);
+        refresh();
+
+        // ====================================================
+        // CAPTURA DE TECLAS E LÓGICA DE ROLAGEM
+        // ====================================================
+        int tecla = getch();
+        
+        // Rola Instruções
+        if (tecla == KEY_DOWN && topo_inst < 256 - max_visiveis) topo_inst++;
+        else if (tecla == KEY_UP && topo_inst > 0) topo_inst--;
+        
+        // Rola Dados
+        else if ((tecla == 's' || tecla == 'S') && topo_dados < 256 - max_visiveis) topo_dados++;
+        else if ((tecla == 'w' || tecla == 'W') && topo_dados > 0) topo_dados--;
+        
+        // Sair da aba
+        else if (tecla == 10 || tecla == 27 || tecla == 'q') rodando = 0; 
+    }
+
+    // Limpeza na hora de fechar e voltar ao menu
+    delwin(w_inst);
+    delwin(w_data);
+    clear();
+    refresh();
 }
