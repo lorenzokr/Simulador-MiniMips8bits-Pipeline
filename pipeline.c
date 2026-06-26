@@ -3,6 +3,11 @@
 #include<string.h>
 #include <stdint.h>
 #include <ncurses.h>
+#include <dirent.h>
+#include <limits.h>
+
+#define MAX_ARQUIVOS 20
+#define MAX_NOMEARQUIVO 64
 
 FILE *mem = NULL;
 char **mem_instr = NULL;
@@ -160,7 +165,8 @@ typedef struct unidade_hazard
 
 instrucao decodificar(char *bin);
 void imprimir_ass (char*bin, char** mem_instr, int k);
-void carregamem (char **mem_instr, int m, int n);
+int carregamem (char **mem_instr, int m, int n, char *arquivo);
+int carregadat(int *mem_dados, char *arquivo);
 void imprimir_mem_instr(char **mem_instr, int m, int n, char* bin);
 void imprimir_reg(int registradores[8]);
 void imprimir_instrucao(instrucao p);
@@ -181,7 +187,6 @@ void imprimir_mem_dados(int mem[]);
 void gerar_asm(instrucao p,int pc,char bin[]);
 void gerar_dat(int mem[]);
 void mostrar_metricas(metricas m);
-void carregadat (int *mem_dados);
 void reduzir_metricas(metricas *m, char ultimaInst);
 REG_pepiline_BI_ID estagio_busca(int pc,char **mem_instr);
 REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entrada_unidade_hazard entrada_hazard_unidade,saida_unidade_hazard *saida_hazard_unidade,metricas *m);
@@ -204,6 +209,11 @@ void desenha_menu(WINDOW *win, int largura, int altura);
 void desenha_opcao(WINDOW *win, int largura, int altura);
 void desenha_registradores_pipeline(WINDOW *win, int largura, int altura, int reg[8], REG_pepiline_BI_ID ifid, REG_pepiline_ID_EX idex, REG_pepiline_EX_MEM exmem, REG_pepiline_MEM_WB memwb);
 void exibir_memorias_pipeline_ncurses(char **mem_inst, int *mem_dados);
+int listar_arquivos(const char *extensao, char arquivos[][MAX_NOMEARQUIVO]);
+void menu_carregar_memoria(const char *extensao, int tipo, char **memoriaInstrucoes, int *memoriaDados);
+void popup_msg(const char *msg, int flag);
+
+
 
 int main() {
     FILE *mem = NULL;
@@ -212,10 +222,11 @@ int main() {
     int m = 256;
     int n = 16;
     int pc = 0;
-    int registradores[8]={0, 1, 2, 0, 10, 0, 8, 0};
+    int registradores[8]={0};
     int memoria[256] = {0};
     int escolha = 1;
     char bin[17];
+    char arquivos[MAX_ARQUIVOS][MAX_NOMEARQUIVO];
     
     // 1. REGISTRADORES ÚNICOS (Sem atual/prox)
     REG_pepiline_BI_ID   reg_IfID  = {0};
@@ -303,7 +314,7 @@ int main() {
     int janela_pipeX = janela_estX + largura_janela_esq + 1;
     int largura_janela_pipe = t_colunas - janela_pipeX - margem_direita;
     int altura_janela_pipe = t_linhas;
-
+    printf("\033[2J");
     clear();
     printw("\n\n -=-=-= SIMULADOR MINI-MIPS 8 BITS PIPELINE =-=-=-\n\n\n Qual o tempo de clock do simulador (em ps)? ");
     echo(); 
@@ -347,24 +358,22 @@ int main() {
         {
             case 1:
                 wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
-                mvwprintw(menu_win, 2, 4, ">> OPCAO 1: CARREGAR MEM. INSTRUCOES <<");
+                mvwprintw(menu_win, 2, 4, ">> OPÇÃO 1: CARREGAR MEM. INSTRUÇÕES <<");
                 wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
-                printf("\nCarregando memoria\n");
-                carregamem(mem_instr, m, n);
+                menu_carregar_memoria(".mem", 0, mem_instr, memoria);
                 break;
             case 2: 
                 wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
-                mvwprintw(menu_win, 2, 4, ">> OPCAO 2: CARREGAR MEM. DADOS <<");
+                mvwprintw(menu_win, 2, 4, ">> OPÇÃO 2: CARREGAR MEM. DADOS <<");
                 wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
-                printf("\nCarregando memoria de dados...\n");
-                carregadat(memoria);
+                menu_carregar_memoria(".dat", 1, mem_instr, memoria);
                 break;
             case 4:
                 exibir_memorias_pipeline_ncurses(mem_instr,memoria);
                 break;
             case 3:
                 wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
-                mvwprintw(menu_win, 2, 4, ">> OPCAO 3: SALVAR ASM E DAT <<");
+                mvwprintw(menu_win, 2, 4, ">> OPÇÃO 3: SALVAR ASM E DAT <<");
                 wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
                 printf("\nArquivo Assembly sendo gerado...");
                 temp_pc = 0; // Previne erro caso rode a opção 3 mais de uma vez
@@ -386,9 +395,8 @@ int main() {
                 if (escolha == 6) 
                 {
                     wattron(menu_win, COLOR_PAIR(1) | A_BOLD);
-                    mvwprintw(menu_win, 2, 4, ">> OPCAO 6: EXECUTAR PROGRAMA TODO <<");
+                    mvwprintw(menu_win, 2, 4, ">> OPÇÃO 6: EXECUTAR PROGRAMA TODO <<");
                     wattroff(menu_win, COLOR_PAIR(1) | A_BOLD);
-                    printf("\n================ EXECUTANDO PROGRAMA (RUN) ================\n");
                 }
                 do 
                 {
@@ -531,7 +539,7 @@ int main() {
             default:
                 if (escolha != 0) printf("\nOpcao invalida!");
                 break;
-        }
+        }/*
         if (escolha > 0) 
         {
             printf("\n\nPressione ENTER para voltar ao simulador...");
@@ -539,11 +547,11 @@ int main() {
             getchar(); // Espera tecla
             reset_prog_mode(); // Retorna ao ncurses
             refresh();         // Atualiza a tela toda
-        }
+        }*/
     } while (escolha != 0);
     endwin();
     desalocameminstr(mem_instr, m, n);
-    printf("Simulador encerrado com sucesso.\n");
+    printf("\n\nSimulador encerrado com sucesso.\n");
     return 0;
 }
 
@@ -570,44 +578,39 @@ void desalocameminstr(char **mem_instr, int m, int n){
     return;
 }
 
-void carregamem (char **mem_instr, int m, int n)
+int carregamem (char **mem_instr, int m, int n, char *arquivo)
 {
-char nome_arq[256];
-printf("\nDigite o nome do arquivo que você quer acessar: ");
-scanf("%s",nome_arq);
-mem = fopen(nome_arq, "r");
-if (mem == NULL){
-    printf("Erro ao abrir o arquivo!\n");
-    return; }
+    mem = fopen(arquivo, "r");
+    if (mem == NULL){
+        return 1;
+    }
     int c;
     for(int i=0;i<m;i++){
         for(int j=0;j<n;j++) {
             c = fgetc(mem);
             if(c == '1'){
-                mem_instr[i][j] = c; }
-                else if(c=='0'){
-                    mem_instr[i][j] = '0';
-                }
-                else if( c == '\n'){
-                j--;
-                }else {
+                mem_instr[i][j] = c;
+            }
+            else if(c=='0'){
                 mem_instr[i][j] = '0';
-                }
+            }
+            else if( c == '\n'){
+            j--;
+            }
+            else {
+            mem_instr[i][j] = '0';
+            }
         }
-    } fclose(mem);
-    printf("Memoria carregada!\n");
-    return;
+    }
+    fclose(mem);
+    return 0;
 }
 
-void carregadat(int *mem_dados)
+int carregadat(int *mem_dados, char *arquivo)
 {
-    char nome_dat[256];
-    printf("\nDigite o nome do arquivo da memoria de dados que voce quer:");
-    scanf("%s",nome_dat);
-    mem = fopen(nome_dat, "r");
+    mem = fopen(arquivo, "r");
     if (mem == NULL){
-        printf("Erro ao abrir o arquivo!\n");
-        return;
+        return 1;
     }
     char c[6];
     int i = 0;
@@ -617,7 +620,7 @@ void carregadat(int *mem_dados)
     }
 
     fclose(mem);
-    printf("\nMemória de dados carregada");
+    return 0;
 }
 
 instrucao decodificar(char *bin) {
@@ -1630,9 +1633,9 @@ void exibir_memorias_pipeline_ncurses(char **mem_inst, int *mem_dados)
     // Criação das janelas separadas
     WINDOW *w_inst = newwin(alt, larg, margem, margem);
     WINDOW *w_data = newwin(alt, larg, margem, margem + larg + 1);
-
     keypad(stdscr, TRUE); 
     nodelay(stdscr, FALSE); 
+    flushinp();
 
     int topo_inst = 0, topo_dados = 0;
     int max_visiveis = alt - 6;
@@ -1758,4 +1761,186 @@ void exibir_memorias_pipeline_ncurses(char **mem_inst, int *mem_dados)
     delwin(w_data);
     clear();
     refresh();
+}
+
+int listar_arquivos(const char *extensao, char arquivos[][MAX_NOMEARQUIVO])
+{
+    DIR *dir;
+    struct dirent *ent;
+
+    int qtd = 0;
+
+    dir = opendir(".");
+
+    if(dir == NULL)
+        return 0;
+
+    while((ent = readdir(dir)) != NULL)
+    {
+        char *ponto = strrchr(ent->d_name,'.');
+
+        if(ponto && strcmp(ponto, extensao)==0)
+        {
+            strcpy(arquivos[qtd], ent->d_name);
+            printf("Lido: '%s' (%zu)\n",
+            arquivos[qtd],
+            strlen(arquivos[qtd]));
+            
+            qtd++;
+
+            if(qtd >= MAX_ARQUIVOS)
+                break;
+        }
+    }
+
+    closedir(dir);
+
+    return qtd;
+}
+void menu_carregar_memoria(const char *ext, int tipo, char **memoriaInstrucoes, int *memoriaDados)
+{
+    char arquivos[MAX_ARQUIVOS][MAX_NOMEARQUIVO];
+
+    int qtd = listar_arquivos(ext, arquivos);
+    for(int i = 0; i < qtd; i++) {
+        printf("[%s]\n", arquivos[i]);
+    }
+    if(qtd == 0)
+    {
+        popup_msg("Nenhum arquivo encontrado", 0);
+        return;
+    }
+
+    keypad(stdscr, TRUE);
+
+    int sel = 0;
+
+    int H = LINES * 3 / 4;
+    int W = COLS / 2;
+
+    int Y = (LINES - H) / 2;
+    int X = (COLS - W) / 2;
+
+    WINDOW *w = newwin(H, W, Y, X);
+    WINDOW *lista = derwin(w, H-8, W-8, 4, 4);
+
+
+    while(1)
+    {
+        // NÃO limpa stdscr
+        // NÃO recria janela
+
+        werase(w);
+        wattron(w, COLOR_PAIR(1));   // azul claro
+        box(w, 0, 0);
+        wattroff(w, COLOR_PAIR(1));
+        
+        const char *titulo =
+            (tipo == 0)
+            ? " CARREGAR MEMORIA DE INSTRUCOES "
+            : " CARREGAR MEMORIA DE DADOS ";
+
+        wattron(w, A_REVERSE | COLOR_PAIR(1));
+        mvwprintw(w, 1, (W - strlen(titulo))/2, "%s", titulo);
+        wattroff(w, A_REVERSE | COLOR_PAIR(1));
+
+        mvwhline(w, 2, 1, ACS_HLINE, W-2);
+
+        // lista
+        werase(lista);
+        box(lista, 0, 0);
+
+        mvwprintw(lista, 1, 2, "Arquivos (%s)", ext);
+
+
+        int max = getmaxy(lista);
+        for(int i = 0; i < qtd && (3+i) < max-1; i++)
+        {
+            if(i == sel)
+            {
+                wattron(lista, COLOR_PAIR(3) | A_BOLD);
+                mvwprintw(lista, 3+i, 2, "> %s", arquivos[i]);
+                wattroff(lista, COLOR_PAIR(3) | A_BOLD);
+            }
+            else
+            {
+                mvwprintw(lista, 3+i, 4, "%s", arquivos[i]);
+            }
+        }
+
+        // footer
+        wattron(w, COLOR_PAIR(5) | A_REVERSE);
+        mvwprintw(w, H-2, (W - 60)/2,
+                  " [SETAS]: Selecionar | [ENTER]: Carregar | [ESC]: Voltar ");
+        wattroff(w, COLOR_PAIR(5) | A_REVERSE);
+
+        // ORDEM IMPORTANTE
+        wrefresh(lista);
+        wrefresh(w);
+
+        int ch = getch();
+
+        if(ch == KEY_UP && sel > 0)
+            sel--;
+
+        else if(ch == KEY_DOWN && sel < qtd-1)
+            sel++;
+
+        else if(ch == 10)
+        {
+            int erro;
+
+            if(tipo == 0)
+                erro = carregamem(memoriaInstrucoes, 256, 16, arquivos[sel]);
+            else
+                erro = carregadat(memoriaDados, arquivos[sel]);
+
+            delwin(lista);
+            delwin(w);
+
+            if(!erro)
+            {
+                char buf[120];
+                snprintf(buf, sizeof(buf),
+                         "Arquivo '%s' carregado!", arquivos[sel]);
+
+                popup_msg(buf, 1);
+            }
+            else
+            {
+                popup_msg("Erro ao carregar arquivo", 0);
+            }
+
+            return;
+        }
+
+        else if(ch == 27)
+        {
+            delwin(lista);
+            delwin(w);
+            return;
+        }
+    }
+}
+
+void popup_msg(const char *msg, int flag)
+{
+    int h = 7, w = 50;
+
+    WINDOW *p = newwin(h, w, (LINES-h)/2, (COLS-w)/2);
+    wattron(p, (flag == 1) ? COLOR_PAIR(3) | A_BOLD : COLOR_PAIR(4) | A_BOLD);
+    box(p,0,0);
+    wattroff(p, (flag == 1) ? COLOR_PAIR(3) | A_BOLD : COLOR_PAIR(4) | A_BOLD);
+
+    wattron(p, (flag == 1) ? COLOR_PAIR(3) | A_BOLD : COLOR_PAIR(4) | A_BOLD);
+    mvwprintw(p, 2, (w - strlen(msg))/2, "%s", msg);
+    wattroff(p, (flag == 1) ? COLOR_PAIR(3) | A_BOLD : COLOR_PAIR(4) | A_BOLD);
+
+    mvwprintw(p, 4, (w - 22)/2, "ENTER para continuar");
+
+    wrefresh(p);
+
+    while(getch() != 10);
+
+    delwin(p);
 }
