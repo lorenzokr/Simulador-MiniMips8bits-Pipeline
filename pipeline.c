@@ -206,10 +206,12 @@ int main() {
     char ultimainst = 0;
     int m = 256;
     int n = 16;
+    int nClocks;
     int pc = 0;
     int registradores[8]={0};
     int memoria[256] = {0};
     int escolha = 1;
+    int contador;
     char bin[17];
     char arquivos[MAX_ARQUIVOS][MAX_NOMEARQUIVO];
     
@@ -240,7 +242,7 @@ int main() {
     mem_instr = criameminstr(m, n);
     int temp_pc = 0;
     int pc_prox = 0;
-        initscr();
+    initscr();
     cbreak();
     noecho();
     refresh();
@@ -299,7 +301,6 @@ int main() {
     int janela_pipeX = janela_estX + largura_janela_esq + 1;
     int largura_janela_pipe = t_colunas - janela_pipeX - margem_direita;
     int altura_janela_pipe = t_linhas;
-    printf("\033[2J");
     clear();
     printw("\n\n -=-=-= SIMULADOR MINI-MIPS 8 BITS PIPELINE =-=-=-\n\n\n Qual o tempo de clock do simulador (em ps)? ");
     echo(); 
@@ -327,13 +328,22 @@ int main() {
         wrefresh(janela_pipe);
 
         echo();
-        wmove(janela_op, altura_janela_opcao / 2, 23);
+        wmove(janela_op, altura_janela_opcao / 2 - 1, 23);
         wscanw(janela_op, "%d", &escolha);
         noecho();
         
         wclear(menu_win);
         box(menu_win, 0, 0);
 
+        if (escolha == 5 || escolha == 7)
+        {
+            mvwprintw(janela_op, altura_janela_opcao / 2 + 1, 4, "Quantos clocks? ");
+            wmove(janela_op, altura_janela_opcao / 2 + 1, 20);
+            echo();
+            wscanw(janela_op, "%d", &nClocks);
+            noecho();
+        }
+        
         if (escolha > 0) 
         {
             def_prog_mode(); // Salva estado do ncurses
@@ -364,29 +374,31 @@ int main() {
                 break;    
                 case 6: // ================== RUN (Código unificado com o STEP) ==================
                 case 5: // ================== STEP ==================
-                do 
+                while (pc <= 255 && (escolha == 6 || nClocks > 0))
                 {
-                    pushStepback(&pilha, c, reg_IfID, reg_IdEX, reg_ExMem, reg_MemWb, entradas_forwarding, sinais_forwarding, metricas, pc, registradores, memoria);
-                    
-                    pc_prox = somador_pc(pc);
 
-                    // ---------------------------------------------------------
+                    pushStepback(&pilha, c, reg_IfID, reg_IdEX, reg_ExMem, reg_MemWb, entradas_forwarding, sinais_forwarding, metricas, pc, registradores, memoria);
+                    pc_prox = somador_pc(pc);
+                    metricas.contClock++;
+                    nClocks--;
+
+
+
                     // 5. ETAPA DE WRITE BACK (WB)
-                    // ---------------------------------------------------------
                     estagio_wb(reg_MemWb, registradores);
+
                     
-                    // ---------------------------------------------------------
+
                     // 4. ETAPA DE ACESSO A MEMORIA (MEM)
-                    // ---------------------------------------------------------
                     reg_MemWb_antigo = reg_MemWb;
                     reg_MemWb = estagio_mem(reg_ExMem, memoria, &pc_prox);
                 
                     // === DETECÇÃO DE FLUSH (Controle de Hazard de Desvio) ===
                     int desvio_tomado = ((reg_ExMem.sinais_mem.Branch && reg_ExMem.zero_ula) || reg_ExMem.sinais_mem.jump);
 
-                    // ---------------------------------------------------------
+
+
                     // 3. ESTAGIO DE EXECUCAO E FORWARDING (EX)
-                    // ---------------------------------------------------------
                     entradas_forwarding.id_ex_RegRS   = reg_IdEX.rs;
                     entradas_forwarding.id_ex_RegRT   = reg_IdEX.rt;
                     entradas_forwarding.ex_mem_writeREG = reg_ExMem.sinais_wb.RegWrite;
@@ -396,38 +408,32 @@ int main() {
 
                     sinais_forwarding = forwading_unidade(entradas_forwarding, &metricas);
                     saida_mem_wb = mux_memtoreg(reg_MemWb_antigo.saida_memoria, reg_MemWb_antigo.resultado_ula, reg_MemWb_antigo.sinais_wb.MemToReg);
+                    reg_ExMem = estagio_ex(reg_IdEX, reg_ExMem.resultado_ula, saida_mem_wb, sinais_forwarding);                
 
-                    reg_ExMem = estagio_ex(reg_IdEX, reg_ExMem.resultado_ula, saida_mem_wb, sinais_forwarding);
-
-                
                     // === FLUSH NO REGISTRADOR EX/MEM ===
                     if (desvio_tomado) {
                         memset(&reg_ExMem, 0, sizeof(reg_ExMem));
-                        reg_ExMem.instrucao.opcode = -1; // Sinaliza bolha
+                        reg_ExMem.instrucao.opcode = 1; // Sinaliza bolha
                     }
 
-                    // ---------------------------------------------------------
+
+
                     // 2. ESTAGIO DE DECODIFICACAO (ID) E HAZARD
-                    // ---------------------------------------------------------
                     entrada_hazard_unidade.ID_EX_READMEM = (reg_IdEX.instrucao.opcode == 11) ? 1 : 0;
-                    entrada_hazard_unidade.ID_EX_registradorRT = reg_IdEX.rt;
-                    
+                    entrada_hazard_unidade.ID_EX_registradorRT = reg_IdEX.rt;                    
                     reg_IdEX = estagio_ID(reg_IfID, registradores, entrada_hazard_unidade, &saida_hazard_unidade, &metricas);
-                    
-                
+
                     // === FLUSH NO REGISTRADOR ID/EX ===
                     if (desvio_tomado) 
                     {
-                        if (escolha == 5) printf("    [!] FLUSH: Instrucao no estagio ID descartada devido ao desvio tomado.\n");
                         metricas.contControlHazard+=1;
                         memset(&reg_IdEX, 0, sizeof(reg_IdEX));
-                        reg_IdEX.instrucao.opcode = -1; // Sinaliza bolha
+                        reg_IdEX.instrucao.opcode = 1; // Sinaliza bolha
                     }
 
-                    // ---------------------------------------------------------
-                    // 1. ETAPA DE BUSCA (IF)
-                    // ---------------------------------------------------------
-                    
+
+
+                    // 1. ETAPA DE BUSCA (IF)                    
                     if (saida_hazard_unidade.IF_ID_escrita == 1) {
                         reg_IfID = estagio_busca(pc, mem_instr);
                     }
@@ -438,19 +444,20 @@ int main() {
                         strcpy(reg_IfID.instrucao, "0001000000000000"); // Define um Opcode inválido que zera sinais
                     }
 
-                    // =========================================================
                     // ATUALIZAÇÃO DO PC 
-                    // =========================================================
                     // Agora inclui a verificação de desvio_tomado para ignorar os stalls
                     if (desvio_tomado || saida_hazard_unidade.pc_escrita == 1) {
                         pc = pc_prox; 
                     }
 
-                    metricas.contClock++;      
-                } while (escolha == 6 && pc <= 255);
+                }
                 break;
             case 7:
-                popStepback(&pilha, &c, &reg_IfID, &reg_IdEX, &reg_ExMem, &reg_MemWb, &entradas_forwarding, &sinais_forwarding, &metricas, &pc, registradores, memoria);
+                contador = 0;
+                while (contador < nClocks && pilha.topo != NULL) {
+                    popStepback(&pilha, &c, &reg_IfID, &reg_IdEX, &reg_ExMem, &reg_MemWb, &entradas_forwarding, &sinais_forwarding, &metricas, &pc, registradores, memoria);
+                    contador++;
+                }
                 break;
                 
             default:
@@ -537,12 +544,12 @@ instrucao decodificar(char *bin) {
     i.opcode = (valor >> 12) & 0xF;
     if (i.opcode==0) 
     {
-    i.rs = (valor >> 9) & 0x7;
-    i.rt = (valor >> 6) & 0x7;
-    i.rd = (valor >> 3) & 0x7;
-    i.funct = valor & 0x7; 
-    i.imm=valor & 0x3f;
-    i.addr=valor & 0xff;
+        i.rs = (valor >> 9) & 0x7;
+        i.rt = (valor >> 6) & 0x7;
+        i.rd = (valor >> 3) & 0x7;
+        i.funct = valor & 0x7; 
+        i.imm=valor & 0x3f;
+        i.addr=valor & 0xff;
     }
     else if (i.opcode==2) {
         //TIPO J
@@ -553,13 +560,15 @@ instrucao decodificar(char *bin) {
         i.imm=0;
         i.funct=0;
         }
-        else {
-            //TIPO I
-            i.rs=(valor >> 9) & 0x7;
-            i.rt=(valor >> 6) & 0x7;
-            i.rd = (valor >> 3) & 0x7;
-            i.imm=valor & 0x3f;
-        } return i;
+    else {
+        //TIPO I
+        i.rs=(valor >> 9) & 0x7;
+        i.rt=(valor >> 6) & 0x7;
+        i.rd = (valor >> 3) & 0x7;
+        i.imm=valor & 0x3f;
+    }
+    
+    return i;
 }
 
 
@@ -1039,13 +1048,12 @@ REG_pepiline_MEM_WB estagio_mem(REG_pepiline_EX_MEM ex, int memoria[], int *pc)
     return Mem;
 }
 
-void estagio_wb(REG_pepiline_MEM_WB Mem,int banco_registrador[8])
+void estagio_wb(REG_pepiline_MEM_WB Mem, int banco_registrador[8])
 {
-    int saida_mux_memtoreg;
-    saida_mux_memtoreg=mux_memtoreg(Mem.saida_memoria,Mem.resultado_ula,Mem.sinais_wb.MemToReg);
-    if(Mem.sinais_wb.RegWrite)
+    if (Mem.sinais_wb.RegWrite)
     {
-        banco_registrador[Mem.registrador_destino]=saida_mux_memtoreg;
+        banco_registrador[Mem.registrador_destino] = mux_memtoreg(Mem.saida_memoria,Mem.resultado_ula,Mem.sinais_wb.MemToReg);
+        // MemToReg 0: Memória    1: ULA
         return;
     }
 }
@@ -1177,13 +1185,22 @@ void desenha_opcao(WINDOW *win, int largura, int altura) {
     wattron(win, COLOR_PAIR(3));
     box(win, 0, 0);
     // Centraliza o texto verticalmente dependendo da altura que sobrar
-    mvwprintw(win, altura / 2, 4, "Escolha uma opcao: "); 
+    mvwprintw(win, altura / 2 - 1, 4, "Escolha uma opcao: "); 
     wattroff(win, COLOR_PAIR(3));
 }
 void gerar_assembly_str(instrucao p, char *destino, sinais_controle_forwading f, saida_unidade_hazard h) 
 {
     int imm_ext;
+            sprintf(destino, "1 %d", p.addr);
     switch (p.opcode) {
+
+
+
+            //testando
+        case 1:
+            sprintf(destino, "Bolha %d", p.addr);
+            break;
+
         case 0:
             switch (p.funct) {
                 case 0:
@@ -1201,7 +1218,6 @@ void gerar_assembly_str(instrucao p, char *destino, sinais_controle_forwading f,
         case 2:
             sprintf(destino, "jump %d", p.addr);
             break;
-
         case 4:
             imm_ext = sign_extend6to8(p.imm);
             sprintf(destino, "addi $%d,$%d,%d", p.rt, p.rs, imm_ext);
@@ -1223,7 +1239,7 @@ void gerar_assembly_str(instrucao p, char *destino, sinais_controle_forwading f,
             break;
 
         default:
-            sprintf(destino, "unknown");
+            sprintf(destino, "unknown %d", p.opcode);
             break;
     }
 }
