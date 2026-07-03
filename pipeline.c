@@ -827,14 +827,14 @@ controle sinais_controle_pipeline(instrucao i,metricas *m)
     switch(i.opcode){
         case 0:
             // Tipo R
-            if(i.rd != 0 && i.rs !=0 && i.rt != 0)
+            c.RegDst = 1;
+            c.ALUSrc = 0;
+            c.MemToReg = 1;
+            c.RegWrite = 1;
+            c.ALUOp = i.funct;
+            if(!(i.rd == 0 && i.rs == 0 && i.rt == 0))
             {
                 m->contInstReg+=1;
-                c.RegDst = 1;
-                c.ALUSrc = 0;
-                c.MemToReg = 1;
-                c.RegWrite = 1;
-                c.ALUOp = i.funct;
             } // usa funct direto
             break;
         case 4:
@@ -954,7 +954,15 @@ REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entr
     id.rd=i.rd;
     id.rt=i.rt;
     id.rs=i.rs;
-
+    id.sinais_ex.ALUOp=c.ALUOp;
+    id.sinais_ex.ALUSrc=c.ALUSrc;
+    id.sinais_ex.RegDst=c.RegDst;
+    id.sinais_mem.Branch=c.Branch;
+    id.sinais_mem.jump=c.jump;
+    id.sinais_mem.MemWrite=c.MemWrite;
+    id.sinais_wb.MemToReg=c.MemToReg;
+    id.sinais_wb.RegWrite=c.RegWrite;
+    
     entrada2.instrucao=id.instrucao;
     entrada2.saida1_banco_reg=id.saida1_banco_reg;
     entrada2.saida2_banco_reg=id.saida2_banco_reg;
@@ -965,17 +973,8 @@ REG_pepiline_ID_EX estagio_ID(REG_pepiline_BI_ID r,int banco_registrador[8],entr
     entrada2.rs=id.rs;
     entrada2.rt=id.rt;
 
-    id.sinais_ex.ALUOp=c.ALUOp;
-    id.sinais_ex.ALUSrc=c.ALUSrc;
-    id.sinais_ex.RegDst=c.RegDst;
-    id.sinais_mem.Branch=c.Branch;
-    id.sinais_mem.jump=c.jump;
-    id.sinais_mem.MemWrite=c.MemWrite;
-    id.sinais_wb.MemToReg=c.MemToReg;
-    id.sinais_wb.RegWrite=c.RegWrite;
     Registrador_id_ex=mux_sinais_controle(saida_hazard_unidade->sinal_mux_controle,id,entrada2);
     return Registrador_id_ex;
-    return id;
 }
 REG_pepiline_EX_MEM estagio_ex(REG_pepiline_ID_EX id, int ex_mem, int mem_wb, sinais_controle_forwading sinal_forwading)
 {
@@ -1010,6 +1009,7 @@ REG_pepiline_EX_MEM estagio_ex(REG_pepiline_ID_EX id, int ex_mem, int mem_wb, si
     
     return ex;
 }
+
 REG_pepiline_MEM_WB estagio_mem(REG_pepiline_EX_MEM ex, int memoria[], int *pc)
 {
     REG_pepiline_MEM_WB Mem={0};
@@ -1019,7 +1019,6 @@ REG_pepiline_MEM_WB estagio_mem(REG_pepiline_EX_MEM ex, int memoria[], int *pc)
     switch (ex.sinais_mem.MemWrite)
     {
     case 1:
-        // Cuidado: certifique-se de que ex.resultado_ula é um endereço válido (>=0 e <256)
         if (ex.resultado_ula >= 0 && ex.resultado_ula < 256) {
             memoria[ex.resultado_ula] = ex.saida2_banco_registradores;
         }
